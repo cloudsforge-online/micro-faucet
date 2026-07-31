@@ -106,6 +106,43 @@ export async function reserve(
   input: { readonly recipient: string; readonly requester: string },
   config: LimitConfig,
 ): Promise<Reservation> {
+  /*
+   * ALL-OR-NOTHING IS A PROPERTY OF THIS FUNCTION, NOT OF WHAT THE CALLER DOES NEXT.
+   *
+   * The three statements below run in order and any of them may refuse, so a request that passes
+   * the cooldown and then fails the budget has already written a grant row. Leaving that behind
+   * would bar an address for a day over a limit it did not break — it never got a drip — and the
+   * bar would be invisible, because nothing else in the system knows the grant was speculative.
+   *
+   * A SAVEPOINT is what makes the guarantee independent of the caller. `acceptDrip` happens to
+   * throw on a refusal, which rolls the outer transaction back and would have hidden this; a
+   * future caller that simply reads the returned `Refusal` and commits would not. The rollback
+   * belongs here, where the partial write happens.
+   *
+   * `RefusedInternally` is private and never escapes: it exists only to make `savepoint` roll
+   * back, which it does by catching a throw.
+   */
+  let outcome: Reservation = { ok: true }
+  try {
+    await tx.savepoint(async (sp) => {
+      outcome = await attempt(sp as unknown as Tx, input, config)
+      if (!outcome.ok) throw new RefusedInternally()
+    })
+  } catch (err) {
+    if (!(err instanceof RefusedInternally)) throw err
+  }
+  return outcome
+}
+
+/** Private. Rolls the savepoint back and is swallowed by `reserve`; no caller ever sees it. */
+class RefusedInternally extends Error {}
+
+/** The three statements, in order. Called only from `reserve`, only inside its savepoint. */
+async function attempt(
+  tx: Tx,
+  input: { readonly recipient: string; readonly requester: string },
+  config: LimitConfig,
+): Promise<Reservation> {
   const recipient = addressKey(input.recipient)
 
   /* ── 1. The per-address cooldown ──────────────────────────────────────────────────────────
