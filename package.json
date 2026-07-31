@@ -1,0 +1,46 @@
+{
+  "name": "@cloudsforge/faucet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The testnet EMBER faucet. Rate limits enforced by the database rather than by a per-replica Map, dispensing driven by a chain-keyed lease so two replicas cannot double-spend one nonce, the signature committed before it is broadcast so a lost broadcast response cannot send twice, and the funding key held by micro-custody rather than by this process. Supersedes the frozen stack/repos/hearth/tools/faucet, whose limiter is in-memory, whose sender is a single in-process promise chain, and whose default chain id is EMBER MAINNET.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "migrate": "node --import tsx src/migrator.ts",
+    "typecheck": "tsc --noEmit",
+    "_test": "--test-concurrency=1 is required, not a preference: every database test file truncates this service's tables between cases, and node:test runs FILES in parallel by default. A TRUNCATE takes an AccessExclusiveLock, so one file's reset deadlocks against another file's inserts (40P01). Cases within a file already run in order.",
+    "test": "node --import tsx --test --test-concurrency=1 src/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "pnpm typecheck && pnpm test"
+  },
+  "_localDependencies": [
+    "Every sibling takes 'link:', not 'file:'. A 'file:' path PACKS the dependency, and each of",
+    "these packages declares files: ['dist'] with a publishConfig that points main/types at dist/.",
+    "Packing therefore installs a package whose exports resolve to a dist/ that has not been built,",
+    "while its 'main' in the working tree still says src/index.ts. 'link:' symlinks the checkout in",
+    "place, so the working-tree manifest is the one that is read and the package keeps using its own",
+    "already-installed node_modules.",
+    "",
+    "@cloudsforge/contracts-chain is EXACT-PINNED by every consumer of it. This service reads the",
+    "EMBER testnet chain id and the confirmation depth from it and defines neither locally: a faucet",
+    "with its own copy of 7412 is a faucet that keeps paying out after the estate has moved."
+  ],
+  "dependencies": {
+    "@cloudsforge/auth": "link:../runtime/packages/auth",
+    "@cloudsforge/contracts-chain": "link:../contracts/packages/chain",
+    "@cloudsforge/db": "link:../runtime/packages/db",
+    "@cloudsforge/http": "link:../runtime/packages/http",
+    "@cloudsforge/jobs": "link:../runtime/packages/jobs",
+    "@cloudsforge/lifecycle": "link:../runtime/packages/lifecycle",
+    "@cloudsforge/telemetry": "link:../runtime/packages/telemetry",
+    "postgres": "^3.4.5",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
