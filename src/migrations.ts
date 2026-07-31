@@ -212,7 +212,7 @@ export const MIGRATIONS: readonly Migration[] = [
 
       -- THE BUDGET. One row, and the reason a drained faucet is a bounded loss.
       --
-      -- `spent_wei <= cap_wei` is a CHECK rather than a rule in application code, so the ceiling
+      -- "spent_wei <= cap_wei" is a CHECK rather than a rule in application code, so the ceiling
       -- holds against every writer including a future one and including an operator with psql. A
       -- limiter that can be talked past by a second code path is not a limiter.
       create table if not exists faucet_budget (

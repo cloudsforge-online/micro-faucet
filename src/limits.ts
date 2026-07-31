@@ -49,11 +49,9 @@
  * fails the budget consumes neither. `reserve` takes a `Tx` and never opens its own.
  */
 
-import type { Sql } from '@cloudsforge/db'
+import type { Db, Tx } from './db.ts'
 import { addressKey } from './address.ts'
 
-/** A transaction handle. `postgres.js` hands the same callable to a `.begin()` callback. */
-export type Tx = Sql
 
 export type RefusalCode =
   | 'address_cooldown'
@@ -274,7 +272,7 @@ export interface BudgetState {
 }
 
 /** What is left in this window. Read-only, for `/readyz` and the operator surface. */
-export async function budgetState(sql: Sql, config: LimitConfig): Promise<BudgetState> {
+export async function budgetState(sql: Db, config: LimitConfig): Promise<BudgetState> {
   const [row] = (await sql`
     select window_started_at, spent_wei, cap_wei
       from faucet_budget
