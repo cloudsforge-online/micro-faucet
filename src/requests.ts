@@ -38,6 +38,21 @@ import { defaultIdempotencyKey, fingerprint } from './fingerprint.ts'
 import { isUniqueViolation } from './dispense.ts'
 import { reserve, type LimitConfig, type RefusalCode } from './limits.ts'
 
+/**
+ * Private control flow: this request is already known, discovered from inside the transaction.
+ *
+ * Thrown so that the transaction ROLLS BACK — the reservation it took on the way to this discovery
+ * must not survive — and caught immediately below. It never reaches a route.
+ */
+class AlreadyAccepted extends Error {
+  readonly accepted: Omit<Accepted, 'duplicate'>
+  constructor(accepted: Omit<Accepted, 'duplicate'>) {
+    super('already accepted')
+    this.name = 'AlreadyAccepted'
+    this.accepted = accepted
+  }
+}
+
 export class DripRefusedError extends Error {
   readonly code: RefusalCode | 'invalid_address' | 'own_address'
   readonly status: number
@@ -150,6 +165,22 @@ export async function acceptDrip(deps: AcceptDeps, input: AcceptInput): Promise<
     .begin(async (tx) => {
       const reservation = await reserve(tx as unknown as Tx, { recipient, requester: input.requester }, deps.limits)
       if (!reservation.ok) {
+        /*
+         * A REFUSAL IS NOT THE ANSWER IF THIS REQUEST HAS ALREADY BEEN ACCEPTED.
+         *
+         * The check at step 4 and this transaction are not atomic with each other, so a retry that
+         * arrived while the original was still committing read "not found" there and then met the
+         * original's freshly-committed cooldown row here. Returning a 429 to it would be actively
+         * wrong: the caller would be told to wait a day for a drip it has already been granted,
+         * and its own dispense id — the thing it needs in order to poll — would never be served.
+         *
+         * So the fingerprint is looked up once more, now that the winner has committed. This is
+         * cheap (one indexed read on a path that is about to return a refusal anyway) and it is
+         * the difference between idempotency that holds under concurrency and idempotency that
+         * holds only when the retry is late enough.
+         */
+        const alreadyAccepted = await findByFingerprint(tx as unknown as Db, key)
+        if (alreadyAccepted) throw new AlreadyAccepted(alreadyAccepted)
         throw new DripRefusedError(429, reservation.code, reservation.message, reservation.retryAfterSeconds)
       }
       const rows = (await tx`
@@ -161,6 +192,9 @@ export async function acceptDrip(deps: AcceptDeps, input: AcceptInput): Promise<
       return rows[0]!
     })
     .catch(async (err: unknown) => {
+      // Not a failure: the reservation found that this exact request already has a dispense. The
+      // transaction rolled back, which is what was wanted — nothing extra was consumed.
+      if (err instanceof AlreadyAccepted) return { ...err.accepted, duplicate: true as const }
       if (!isUniqueViolation(err)) throw err
       // One of the two unique indexes refused. Both are expected outcomes of a correct race and
       // both roll the reservation back with the transaction, so nothing was consumed.

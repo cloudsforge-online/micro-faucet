@@ -46,7 +46,7 @@
 import type { Db, Tx } from './db.ts'
 import type { Logger, Metrics } from '@cloudsforge/telemetry'
 import { keccak256 } from './keccak.ts'
-import { addressKey, sameAddress } from './address.ts'
+import { addressKey, sameAddress, toChecksumAddress } from './address.ts'
 import { release, type LimitConfig } from './limits.ts'
 import {
   AlreadyKnownError,
@@ -226,7 +226,18 @@ async function start(deps: DispenseDeps, row: DispenseRow): Promise<StartOutcome
   try {
     const nonce = await deps.rpc.getNonce(deps.fundingAddress, 'pending')
     unsigned = {
-      to: row.recipient,
+      // THE CHECKSUMMED FORM, not the lower-cased one the column stores.
+      //
+      // Functionally either would pass: custody's transfer shape only requires
+      // `ethers.isAddress(to)` (`custody/src/signing.ts:243`), which accepts all-lowercase, and
+      // EIP-55 is a display checksum rather than part of the address. It is sent checksummed
+      // because the estate's convention at the custody boundary is the canonical form —
+      // settlement passes an address it has put through `canonicaliseEvm` — and because custody's
+      // SWEEP shape compares `to` against its pin CHARACTER FOR CHARACTER, with a refusal whose
+      // message exists specifically for an address that differs only in case
+      // (`custody/src/signing.ts:299-302`). A service that sent a different spelling from every
+      // other caller would be the one that discovered that the day a shape gained a comparison.
+      to: toChecksumAddress(row.recipient),
       // A decimal string, never a number: 1e18 wei does not fit a double, and custody refuses a
       // non-safe-integer rather than rounding it.
       value: row.amountWei.toString(10),
