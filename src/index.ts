@@ -9,22 +9,32 @@
  * partial unique indexes that stop a double-dispense may not exist.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * **STEP 5 IS THE ONE THAT MATTERS: THE NODE IS ASKED WHAT CHAIN IT IS, AND A DISAGREEMENT IS
- * FATAL.**
+ * **STEP 5: THE NODE IS ASKED WHAT CHAIN IT IS. A DISAGREEMENT IS FATAL; BEING UNREACHABLE IS NOT.**
  *
  * `env.ts` has already established that this build dispenses on chain 7412 and nothing else — the
  * id is read from the exact-pinned `@cloudsforge/contracts-chain` and is not configurable. What it
- * cannot establish is what is at the other end of `FAUCET_RPC_URL`. That is a boot check, it is
- * fatal, and it is fatal in both directions: a node that reports a different chain, and a node that
- * cannot be reached at all.
+ * cannot establish is what is at the other end of `FAUCET_RPC_URL`, so that is checked here.
  *
- * The frozen service is deliberately lenient here — "a node that is down at boot is a normal thing
- * on a testnet ... the faucet recovers on its own" (`stack/repos/hearth/tools/faucet/
- * src/index.js:88-94`) — and for a laptop tool that is a defensible call. It is the wrong call for
- * a service holding a signing credential: an unreachable node at boot means the chain identity was
- * never verified, and the service would begin queueing requests it intends to sign against a chain
- * it has never spoken to. Once the check has passed, a node that goes away later is a SOFT
- * readiness probe and the queue holds — which is the same tolerance, applied where it is safe.
+ * The asymmetry is the frozen service's — "a node that is down at boot is a normal thing on a
+ * testnet ... the faucet recovers on its own", and fatal only for a chain-id mismatch
+ * (`stack/repos/hearth/tools/faucet/src/index.js:88-94`) — and on this specific point it is right,
+ * for a reason worth writing down because the opposite is the tempting call:
+ *
+ *   **An unreachable node cannot cause a wrong-chain signature, because the chain id in a
+ *   signature never comes from the node.** It comes from the pinned package, and custody then
+ *   resolves it a THIRD time from the address's own row and refuses a mismatch
+ *   (`custody/src/keys.ts:298-300`, `custody/src/signing.ts:171`). If this service were pointed at
+ *   a mainnet node tomorrow it would sign a 7412 transaction, that node would reject it under
+ *   EIP-155, and nothing would move.
+ *
+ * So refusing to boot without a node would buy no safety and would cost real availability: the
+ * faucet could not even accept requests during a node restart, and accepting is the one thing it
+ * can still safely do. A node that is absent or that disagrees LATER is the soft readiness probe
+ * below, and `driveChain` holds the queue rather than failing anybody.
+ *
+ * What the check does buy is a misconfigured `FAUCET_RPC_URL` failing loudly on the deploy that
+ * introduced it rather than silently at the first drip — which is worth having, and is why a
+ * disagreement is still fatal.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 
@@ -92,22 +102,32 @@ try {
   process.exit(1)
 }
 
-// 5. THE CHAIN CHECK. See the file header. Fatal, in both directions.
+// 5. THE CHAIN CHECK. See the file header: a DISAGREEMENT is fatal, unreachable is not.
 const rpc = new Rpc({ url: env.rpcUrl, deadlineMs: env.rpcDeadlineMs })
 try {
   const reported = await rpc.chainId()
   if (reported !== CHAIN_ID) {
-    throw new Error(
-      `the node reports chain ${reported}; this faucet dispenses on the EMBER ${NETWORK} ` +
-        `(${CHAIN_ID}) only. A faucet is an unauthenticated withdrawal endpoint and the only ` +
-        'thing making that acceptable is that the coin is worthless.',
+    logger.fatal('the node is not the chain this faucet dispenses on', {
+      reported,
+      expected: CHAIN_ID,
+      network: NETWORK,
+    })
+    process.stderr.write(
+      `\nthe node at ${env.rpcUrl.replace(/\/\/[^@]*@/, '//')} reports chain ${reported}; ` +
+        `this faucet dispenses on the EMBER ${NETWORK} (${CHAIN_ID}) only.\n`,
     )
+    await sql.end({ timeout: 5 }).catch(() => {})
+    process.exit(1)
   }
   logger.info('node reached and verified', { chainId: reported, height: (await rpc.blockNumber()).toString(10) })
 } catch (err) {
-  logger.fatal('the chain could not be verified', { err, chainId: CHAIN_ID })
-  await sql.end({ timeout: 5 }).catch(() => {})
-  process.exit(1)
+  // Not fatal. Nothing can be signed while the node is unreachable — `driveChain` reads the nonce
+  // from it and holds — and the readiness probe below reports it as a soft failure, so an operator
+  // sees it without the balancer taking the replica out for a condition it recovers from.
+  logger.warn('the node could not be reached at boot; serving anyway, /readyz will show it', {
+    err,
+    chainId: CHAIN_ID,
+  })
 }
 
 // 6. Custody. Constructed but not dialled: a signature is only needed when there is something to

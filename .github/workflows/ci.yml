@@ -1,0 +1,68 @@
+name: CI
+
+# The whole file. Every service in the estate calls the ONE reusable workflow in micro-org rather
+# than carrying its own copy — the measured target in docs/ecosystem/03 §5 is zero bespoke CI files.
+# If this repository ever needs a job of its own, that is the signal the reusable workflow needs an
+# input, not that this repository needs a fork of it.
+#
+# `service-ci.yml` typechecks, runs the suite against a real Postgres `ci_test` container, and FAILS
+# the build if the database-backed suite skipped — which is why `src/testsupport.ts` reads
+# `FAUCET_TEST_DATABASE_URL` spelled exactly as the workflow exports it. It also enforces the estate
+# rules (one database, no cross-service imports, the three health endpoints, no unleased timers)
+# that repository walls used to enforce for free.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: cloudsforge-online/micro-org/.github/workflows/service-ci.yml@main
+    with:
+      service: faucet
+      database-env-var: FAUCET_DATABASE_URL
+      port: 4013
+      # The image startup smoke test boots the real service, and `env.ts` validates its
+      # configuration at import — so the container needs the variables it declares, not just a
+      # database, or it exits before it serves /livez.
+      #
+      # These are CI-only NON-secrets. Two of them deserve a note:
+      #
+      #   CUSTODY_TOKEN is a throwaway string that only has to clear a length check. It buys
+      #   nothing: CUSTODY_URL points at a port with nothing on it, and custody is deliberately not
+      #   dialled at boot — a signature is only needed when there is something to sign.
+      #
+      #   FAUCET_RPC_URL likewise points at nothing, and the smoke test still passes, because a
+      #   node that cannot be reached at boot is a WARNING and a soft readiness probe rather than a
+      #   fatal error. `src/index.ts` says why at length: an unreachable node cannot cause a
+      #   wrong-chain signature, since the chain id in a signature comes from the pinned package and
+      #   is bound a third time by custody from the address's own row. A node that DISAGREES is
+      #   still fatal, and that is what the check is for.
+      #
+      # There is no key here, and there is no variable that would accept one — the funding key is
+      # micro-custody's. `src/env.test.ts` proves that by absence.
+      smoke-env: |
+        FAUCET_TOKEN=ci-only-not-a-real-token-0000000000000
+        IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
+        IDENTITY_ISSUER=http://127.0.0.1:4001
+        FAUCET_RPC_URL=http://127.0.0.1:8545
+        CUSTODY_URL=http://127.0.0.1:4008
+        CUSTODY_TOKEN=ci-only-not-a-real-token-0000000000000
+        FAUCET_FUNDING_ADDRESS=0x00000000000000000000000000000000000000fa
+        FAUCET_CUSTODY_USER_ID=cloudsforge:faucet
+        FAUCET_CUSTODY_ORDER_ID=faucet:ember:testnet
+    secrets:
+      # @cloudsforge/* is resolved by link:../runtime and link:../contracts, so CI checks out
+      # micro-runtime and micro-contracts as siblings — both private, so the workflow needs a
+      # contents:read token.
+      estate_token: ${{ secrets.ESTATE_READ_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+
+  hygiene:
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    permissions:
+      contents: read
