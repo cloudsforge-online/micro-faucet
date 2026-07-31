@@ -68,7 +68,16 @@ export class AlreadyKnownError extends Error {
   }
 }
 
-const ALREADY_KNOWN = /already known|known transaction|already exists|nonce too low|replacement transaction underpriced/i
+/**
+ * Every wording a node uses for "I already have this".
+ *
+ * The separator class is not decoration: geth says `already known`, some clients say
+ * `ALREADY_EXISTS` with an underscore, and a pattern written with a space silently misses the
+ * second — which is a re-broadcast read as a failure, and a payment either abandoned or, far worse,
+ * replaced on a fresh nonce. Found by the test that enumerates them.
+ */
+const ALREADY_KNOWN =
+  /already[ _]known|known[ _]transaction|already[ _]exists|nonce[ _]too[ _]low|replacement transaction underpriced/i
 
 export interface TransactionReceipt {
   readonly blockNumber: bigint
