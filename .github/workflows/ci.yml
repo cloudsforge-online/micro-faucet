@@ -48,7 +48,7 @@ jobs:
         IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
         IDENTITY_ISSUER=http://127.0.0.1:4001
         FAUCET_RPC_URL=http://127.0.0.1:8545
-        CUSTODY_URL=http://127.0.0.1:4008
+        CUSTODY_URL=http://127.0.0.1:4005
         CUSTODY_TOKEN=ci-only-not-a-real-token-0000000000000
         FAUCET_FUNDING_ADDRESS=0x00000000000000000000000000000000000000fa
         FAUCET_CUSTODY_USER_ID=cloudsforge:faucet

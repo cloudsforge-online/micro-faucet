@@ -18,7 +18,7 @@ function base(overrides: Record<string, string | undefined> = {}): Record<string
     IDENTITY_ISSUER: 'http://identity:4001',
     FAUCET_TOKEN: 'a-real-looking-secret-of-sufficient-length',
     FAUCET_RPC_URL: 'http://hearth-testnet:8545',
-    CUSTODY_URL: 'http://custody:4008',
+    CUSTODY_URL: 'http://custody:4005',
     CUSTODY_TOKEN: 'another-real-looking-secret-of-length',
     FAUCET_FUNDING_ADDRESS: '0x00000000000000000000000000000000000000fa',
     FAUCET_CUSTODY_ORDER_ID: 'faucet:ember:testnet',
