@@ -86,7 +86,14 @@ function affected(result: unknown): number {
 /** `numeric` arrives as a string; `BigInt` parses it exactly. Never through a `Number`. */
 function wei(value: unknown): bigint {
   if (typeof value === 'bigint') return value
-  if (typeof value === 'string') return BigInt(value)
+  if (typeof value === 'string') {
+    // BigInt('') is 0n — an empty string parses to a confident zero, silently. Postgres never
+    // sends an empty numeric, so this is a guard against the OTHER sources this function's
+    // signature admits, and against the day someone reuses it on a request body.
+    // micro-network-site found the identical hole in its own inherited client by driving it.
+    if (!/^-?\d+$/.test(value)) throw new TypeError(`not a wei amount: ${JSON.stringify(value)}`)
+    return BigInt(value)
+  }
   if (typeof value === 'number') {
     // Reachable only if the driver's numeric parser is reconfigured. Refused rather than rounded:
     // a wei amount that has been through a double is a wei amount that is quietly wrong.
