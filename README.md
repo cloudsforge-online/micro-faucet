@@ -3,6 +3,8 @@
 The testnet EMBER faucet. It hands out worthless coins on the Hearth testnet so that a developer
 with an empty address can deploy something.
 
+Design authority: [`ecosystem/03-repository-responsibilities.md`](https://github.com/cloudsforge-online/micro-docs/blob/main/ecosystem/03-repository-responsibilities.md)
+
 It is also **an abuse target that signs transactions**, and everything below follows from that.
 
 ---
@@ -236,3 +238,10 @@ exist, and a service that could create them at boot is a service that could star
 
 Amounts cross the wire as decimal strings throughout: 1e19 wei is past what a double carries
 exactly, and a client using `JSON.parse` on a number would silently receive a rounded amount.
+
+---
+
+## Provenance
+
+The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, under
+human direction and review.
