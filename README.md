@@ -152,6 +152,32 @@ no path anywhere from `signed` back to `queued`.
 exact-pinned `@cloudsforge/contracts-chain`, the network is a `const`, and `FAUCET_CHAIN_ID` may only
 agree or the process exits.
 
+#### And what the estate does with that — decided 2026-08-05, in the estate and not here
+
+The obvious complaint about point 4 is that a mainnet estate then has **no faucet at all**, and on
+2026-08-05 that complaint had teeth: `network.cloudsforge.online/v1/faucet` answered **502** while
+`/faucet` served a working page, because the estate's gateway routed `/v1` to a container that the
+`ember-testnet` compose profile had never started. The estate was advertising a faucet that cannot
+exist. Nothing failed on it; a person found it.
+
+**The fix was made in the estate, and `NETWORK` was left alone.** The alternative was on the table —
+make the network configurable and default mainnet's faucet to disabled — and it was refused. That
+trades a compile-time impossibility for a default, and a default is a thing a deploy can override at
+three in the morning. On the estate this runs on, mainnet EMBER is mined, publicly reachable and
+backs the ledger: a faucet there is not a faucet, it is a giveaway. The whole point of `as const` is
+that `NETWORK === 'mainnet'` is a *type error* and not a branch somebody can reach.
+
+So `deploy/gateway/dynamic/estate-web.yml` now gates the `cf-api-network` router on
+`CF_EMBER_NETWORK`, and a mainnet estate answers `404` — "there is no such service", which is true —
+instead of `502`. `deploy/scripts/estate-verify.sh` fails if the two ever disagree again, in either
+direction: a testnet with no faucet running, a faucet running on mainnet, or a route published for a
+faucet that is not there.
+
+One thing is still wrong and belongs to `micro-network-site`: the `/faucet` **page** is served on
+the mainnet apex, so a visitor gets a drip form that renders disabled saying the faucet did not
+answer — indistinguishable, to a reader, from the faucet being down. The honest page on a mainnet
+estate says there is no mainnet faucet and links to the testnet one.
+
 ### The chain check, and why an absent node is *not* fatal
 
 A node that **disagrees** is fatal. A node that **cannot be reached** is a warning and a soft
