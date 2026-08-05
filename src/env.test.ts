@@ -418,7 +418,7 @@ describe('the requester salt and its retention period', () => {
 
   it('prefers the dedicated variable when it is set, so the two can rotate independently', () => {
     // Was `'a-dedicated-pseudonymisation-salt-value'` — 39 hyphenated characters, past the old
-    // 32-character floor and carrying 28 bytes, asserted here as a VALID pseudonymisation key.
+    // 32-character floor and carrying 29 bytes, asserted here as a VALID pseudonymisation key.
     const dedicated = randomBytes(48).toString('base64')
     const env = loadEnv(base({ FAUCET_REQUESTER_SALT: dedicated }))
     assert.equal(env.requester.salt, dedicated)
