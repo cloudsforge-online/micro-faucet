@@ -11,7 +11,7 @@
  * different guarantee, and the difference is the whole repository.
  *
  * ---------------------------------------------------------------------------------------------
- * **THE FOUR CONSTRAINTS BELOW ARE THE SERVICE. Everything else is plumbing.**
+ * **THE FIVE CONSTRAINTS BELOW ARE THE SERVICE. Everything else is plumbing.**
  *
  *   `faucet_address_grants`   The per-address cooldown, as a ROW rather than as a `Map` entry.
  *                             The frozen limiter is `this.addresses = new Map()`
@@ -48,6 +48,17 @@
  *                             correct conditional update, both read `eth_getTransactionCount` and
  *                             both get the same answer. At most one can ever be mined. This index
  *                             is what stands when the lease has already failed.
+ *
+ *   `faucet_requester_grants_pseudonymous`
+ *                             **THE REQUESTER KEY CANNOT BE AN IP ADDRESS.** Migration 3 made
+ *                             `requester` a primary key and `server.ts` filled it with
+ *                             `ip:<raw address>` — personal data, kept for ever, pruned by
+ *                             nothing (micro-org#163). Migration 4 erases those rows and states
+ *                             the new shape as a CHECK. It is here rather than only in the
+ *                             handler for the same reason `faucet_budget_within_cap` is: a rule
+ *                             that lives in one code path is a rule the second code path does not
+ *                             have. `requester.ts` is what derives the value; this is what makes
+ *                             it the only value that can be stored.
  * ---------------------------------------------------------------------------------------------
  *
  * **EVERY WEI IS `numeric(78,0)`.** Not `bigint`, which is 64 bits and holds 9.22e18 — nine and a
@@ -224,6 +235,81 @@ export const MIGRATIONS: readonly Migration[] = [
         constraint faucet_budget_nonneg    check (spent_wei >= 0),
         constraint faucet_budget_within_cap check (spent_wei <= cap_wei)
       );
+    `,
+  },
+  {
+    version: 4,
+    name: 'requester-pseudonymity',
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    // THE ERASURE, AND THE CONSTRAINT THAT MAKES IT PERMANENT. micro-org#163.
+    //
+    // Migration 3 above made `faucet_requester_grants.requester` a primary key, and `server.ts`
+    // filled it with `ip:<raw address>`. An IP address is personal data; that column was a
+    // permanent, unminimised record of every network that has ever asked for a testnet drip, with
+    // no retention period and nothing that pruned it.
+    //
+    // The DELETE is the remediation, not a convenience. Every existing row holds a raw address and
+    // there is nothing to migrate it TO — the point of the new scheme is that the value cannot be
+    // recovered, so it cannot be re-derived from what is stored either. The rows are erased. The
+    // cost is that every live requester window is reset once, at deploy, which is the same cost
+    // the salt rotation imposes every period anyway (see requester.ts).
+    //
+    // THE CHECK IS THE HALF THAT LASTS. A handler that truncates and hashes is a convention, and a
+    // convention holds until the next writer of this table — a new route, a backfill script, an
+    // operator with psql, a well-meaning revert of server.ts. The constraint is the same statement
+    // made by the database, so `insert … values ('ip:203.0.113.7', …)` is now an error and not a
+    // regression somebody has to notice. It is a POSITIVE shape rather than "not an IP literal":
+    // both refuse an address, only this one also refuses an email, a session id, a raw prefix that
+    // was never hashed, and whatever the next writer thinks a requester is.
+    //
+    // The regex is `requester.ts`'s `REQUESTER_KEY_SQL_PATTERN` byte for byte, and
+    // `migrations.test.ts` asserts the two are the same string so they cannot drift.
+    //
+    // The index is on `window_started_at` because `pruneRequesters` (jobs.ts) deletes on it every
+    // hour, and a retention sweep that seq-scans is a retention sweep that gets turned off.
+    //
+    // ── THE SECOND COPY, WHICH THE ISSUE DOES NOT MENTION AND WHICH IS THE SAME DATA ──────────
+    //
+    // `dispenses.requester` (migration 2, above) is written from the same value by
+    // `requests.ts:187-188`. It IS covered by a retention period — `pruneSettled` deletes settled
+    // dispenses past `FAUCET_RETENTION_DAYS` — but thirty days of raw addresses is the same
+    // exposure with a shorter fuse, and a `queued` row that never settles is never pruned at all
+    // and would have held one for ever.
+    //
+    // The ledger is NOT deleted: it is the record of what this service paid out, and erasing a
+    // payout to remove a field from it would be a worse answer than the problem. The column is
+    // redacted in place instead, and `r0:redacted` is a value that carries nothing rather than a
+    // null — so `not null` still holds, and a row whose requester was erased says so out loud
+    // instead of looking like a row that never had one.
+    // ══════════════════════════════════════════════════════════════════════════════════════════
+    up: `
+      delete from faucet_requester_grants;
+
+      update dispenses set requester = 'r0:redacted' where requester !~ '^r1:[0-9a-f]{32}$';
+
+      do $$
+      begin
+        alter table faucet_requester_grants
+          add constraint faucet_requester_grants_pseudonymous
+          check (requester ~ '^r1:[0-9a-f]{32}$');
+      exception
+        -- Idempotent for the same reason every 'create table if not exists' above is: a migration
+        -- that cannot be re-applied to a schema that already has it is a migration that turns a
+        -- re-run into an outage.
+        when duplicate_object then null;
+      end $$;
+
+      do $$
+      begin
+        alter table dispenses
+          add constraint dispenses_requester_pseudonymous
+          check (requester ~ '^r1:[0-9a-f]{32}$' or requester = 'r0:redacted');
+      exception
+        when duplicate_object then null;
+      end $$;
+
+      create index if not exists faucet_requester_grants_window_idx
+        on faucet_requester_grants (window_started_at);
     `,
   },
 ]

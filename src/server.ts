@@ -47,6 +47,7 @@ import type { Db } from './db.ts'
 import type { Lifecycle } from '@cloudsforge/lifecycle'
 import { Metrics, newRequestId, type Logger } from '@cloudsforge/telemetry'
 import { budgetState, type LimitConfig } from './limits.ts'
+import { requesterKey, type RequesterConfig } from './requester.ts'
 import { DripRefusedError, acceptDrip, dispenseCounts, readDispense } from './requests.ts'
 
 export interface PrincipalVerifier {
@@ -66,6 +67,12 @@ export interface ServerDeps {
   readonly chainId: number
   readonly fundingAddress: string
   readonly limits: LimitConfig
+  /**
+   * The salt and rotation period the per-requester counter is keyed under. Required rather than
+   * defaulted: a `ServerDeps` that could be built without it is a `ServerDeps` that could store a
+   * raw address, and the compiler is the cheapest place to refuse that.
+   */
+  readonly requester: RequesterConfig
   /** Browser origins allowed to POST a drip. An allowlist, never a wildcard. */
   readonly corsOrigins: readonly string[]
   readonly beforeScrape?: () => Promise<void>
@@ -386,7 +393,7 @@ function buildRoutes(): Route[] {
           ...(typeof payload['idempotencyKey'] === 'string'
             ? { idempotencyKey: payload['idempotencyKey'] }
             : {}),
-          requester: requesterOf(ctx),
+          requester: requesterOf(ctx, deps.requester),
         },
       )
       if (!accepted.duplicate) deps.metrics.increment('faucet_drips_accepted_total')
@@ -477,15 +484,28 @@ export function scrapeRefresh(deps: {
  * whose wrong value silently disables a rate limit is a setting worth deleting when the right value
  * is known, so it is deleted.
  *
- * This bounds the lazy case and nothing more — an IPv6 /64 has 2^64 addresses. The budget is the
- * control that actually bounds the loss.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **THE ADDRESS IS READ HERE AND IS GONE BY THE END OF THIS FUNCTION.** It is not stored, not
+ * logged, not returned, and not passed to anything below. `requesterKey` truncates it to a network
+ * prefix and keyed-hashes the prefix under a rotating secret, and that opaque key is the only form
+ * of it this service has ever had since micro-org#163. `requester.ts` carries the whole argument;
+ * `faucet_requester_grants_pseudonymous` is the same rule stated by the schema, so a future edit
+ * to this function that put an address back cannot commit it.
+ *
+ * The old line said "this bounds the lazy case and nothing more — an IPv6 /64 has 2^64 addresses".
+ * That sentence was true of a limit keyed on a WHOLE address and it is why the truncation is not a
+ * concession: keyed on a /48 that same attacker has one bucket instead of 2^16 of them. The budget
+ * is still the control that bounds the loss.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
-function requesterOf(ctx: RequestContext): string {
+function requesterOf(ctx: RequestContext, requester: RequesterConfig): string {
   const forwarded = headerOf(ctx.req, 'x-forwarded-for')
-  const raw = forwarded ? (forwarded.split(',')[0]?.trim() ?? '') : (ctx.req.socket.remoteAddress ?? '')
-  // Bounded before it becomes a primary key. An unbounded header value would let one caller write
-  // rows of any size into `faucet_requester_grants`.
-  return `ip:${raw.slice(0, 64) || 'unknown'}`
+  // Bounded before it reaches the parser. An unbounded header value is a caller choosing how much
+  // work this process does per request, whatever the parser then decides about it.
+  const raw = (
+    forwarded ? (forwarded.split(',')[0]?.trim() ?? '') : (ctx.req.socket.remoteAddress ?? '')
+  ).slice(0, 64)
+  return requesterKey(raw, requester)
 }
 
 /**

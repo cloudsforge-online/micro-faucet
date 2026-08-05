@@ -262,3 +262,100 @@ describe('limits that could never serve a request are refused at boot', () => {
     assert.throws(() => loadEnv(base({ FAUCET_DRIP_EMBER: '0' })), EnvError)
   })
 })
+
+/* ================================================ the requester's privacy budget. #163 */
+
+/**
+ * The configuration behind `requester.ts`: a secret that cannot be a constant, and a period that
+ * cannot be long enough to matter or short enough to break the limit it bounds.
+ *
+ * **No case prints a salt.** They compare derived keys and lengths; the values themselves never
+ * reach an assertion message.
+ */
+describe('the requester salt and its retention period', () => {
+  it('defaults the period to two windows rather than to FAUCET_RETENTION_DAYS', () => {
+    const env = loadEnv(base())
+    assert.equal(env.requester.retentionSeconds, 172_800)
+    assert.equal(env.requester.retentionSeconds, 2 * env.limits.requesterWindowSeconds)
+    // Thirty days is right for a payout ledger and indefensible for a rate limiter's counter, so
+    // the two periods are separate numbers and this is what says so.
+    assert.equal(env.retentionDays, 30)
+    assert.notEqual(env.requester.retentionSeconds, env.retentionDays * 86_400)
+  })
+
+  /**
+   * The failure this refuses is a privacy setting that silently disables a rate limit: a prune
+   * horizon inside the window would delete counters that are still counting, and every requester
+   * would get unlimited drips with nothing in any log to say why.
+   */
+  it('refuses a retention period shorter than the window it is supposed to outlive', () => {
+    assert.throws(
+      () =>
+        loadEnv(
+          base({ FAUCET_REQUESTER_WINDOW_SECONDS: '86400', FAUCET_REQUESTER_RETENTION_SECONDS: '3600' }),
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof EnvError)
+        assert.match(err.message, /would stop refusing anybody/)
+        return true
+      },
+    )
+  })
+
+  it('accepts a period equal to the window, and one a small multiple above it', () => {
+    assert.equal(
+      loadEnv(base({ FAUCET_REQUESTER_WINDOW_SECONDS: '3600', FAUCET_REQUESTER_RETENTION_SECONDS: '3600' }))
+        .requester.retentionSeconds,
+      3_600,
+    )
+    assert.equal(
+      loadEnv(base({ FAUCET_REQUESTER_RETENTION_SECONDS: '604800' })).requester.retentionSeconds,
+      604_800,
+    )
+  })
+
+  it('bounds the period, so it cannot be set to a year by a typo', () => {
+    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_RETENTION_SECONDS: '31536000' })), EnvError)
+    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_RETENTION_SECONDS: '0' })), EnvError)
+    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_RETENTION_SECONDS: 'never' })), EnvError)
+  })
+
+  /**
+   * **THERE IS NO CONSTANT DEFAULT SALT.** A pseudonymisation key committed to a repository is a
+   * pseudonymisation key that does not exist — it would boot, pass every test and protect nothing.
+   * Unset means DERIVED from a secret the deployment already had to provide, so the salt is never
+   * weaker than `FAUCET_TOKEN` and is never a value anybody can read out of this checkout.
+   */
+  it('derives the salt from FAUCET_TOKEN when the dedicated variable is unset', () => {
+    const one = loadEnv(base({ FAUCET_TOKEN: 'the-first-operator-token-of-length-x' })).requester.salt
+    const two = loadEnv(base({ FAUCET_TOKEN: 'the-second-operator-token-of-length-x' })).requester.salt
+    assert.notEqual(one, two, 'the salt must move when the secret it is derived from moves')
+    assert.equal(one.length, 64)
+    assert.ok(!one.includes('operator-token'), 'the derivation must not carry its input through')
+  })
+
+  it('prefers the dedicated variable when it is set, so the two can rotate independently', () => {
+    const dedicated = 'a-dedicated-pseudonymisation-salt-value'
+    const env = loadEnv(base({ FAUCET_REQUESTER_SALT: dedicated }))
+    assert.equal(env.requester.salt, dedicated)
+    assert.notEqual(env.requester.salt, loadEnv(base()).requester.salt)
+  })
+
+  /**
+   * Optional is not the same as unvalidated. A variable that accepts whatever is set because it
+   * has a fallback is how a placeholder ends up being the thing that pseudonymises personal data.
+   */
+  it('holds an optional salt to the same bar as a required secret', () => {
+    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_SALT: 'changeme' })), /known placeholder/)
+    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_SALT: 'too-short' })), /at least 32 characters/)
+  })
+
+  it('never puts the salt anywhere a log line would find it', () => {
+    // The salt is one field on one object. It is not in `limits`, not in the boot log's shape, and
+    // not spread into anything — so this is the shape assertion that keeps it that way.
+    const env = loadEnv(base({ FAUCET_REQUESTER_SALT: 'a-dedicated-pseudonymisation-salt-value' }))
+    assert.deepEqual(Object.keys(env.requester).sort(), ['retentionSeconds', 'salt'])
+    assert.ok(!Object.keys(env.limits).includes('salt'))
+    assert.ok(!Object.keys(env).some((key) => key.toLowerCase().includes('salt')))
+  })
+})

@@ -33,6 +33,7 @@ import {
   skip,
   testAddress,
   testLimits,
+  testRequesterKey,
   type FakeCustody,
   type FakeNode,
 } from './testsupport.ts'
@@ -59,7 +60,7 @@ describe('dispensing', { skip }, () => {
   const limits = testLimits()
 
   /** Queue one request through the real acceptance path. */
-  async function queue(recipient: string, requester = 'ip:test'): Promise<string> {
+  async function queue(recipient: string, requester = testRequesterKey(7)): Promise<string> {
     const accepted = await acceptDrip(
       { sql: db(sql), chainId: TESTNET_CHAIN_ID, fundingAddress: FUNDING_ADDRESS, limits },
       { address: recipient, requester },
@@ -126,8 +127,8 @@ describe('dispensing', { skip }, () => {
 
     it('signs FIFO, so a faucet under load is fair rather than arbitrary', async () => {
       const { custody, deps } = rig()
-      await queue(ALICE, 'ip:one')
-      await queue(BOB, 'ip:two')
+      await queue(ALICE, testRequesterKey(1))
+      await queue(BOB, testRequesterKey(2))
       await driveChain(deps)
       assert.equal(custody.signatures[0]?.to, ALICE)
     })
@@ -357,7 +358,7 @@ describe('dispensing', { skip }, () => {
       const deps = harness(sql, { node, custody, limits, maxRecipientBalanceWei: 1n })
       for (let i = 0; i < 4; i++) {
         node.setBalance(testAddress(0x900 + i), 500n * ONE_EMBER)
-        await queue(testAddress(0x900 + i), `ip:${i}`)
+        await queue(testAddress(0x900 + i), testRequesterKey(0x100 + i))
       }
       const result = await driveChain(deps)
       assert.equal(result.retired.length, 4)
@@ -374,8 +375,8 @@ describe('dispensing', { skip }, () => {
   describe('one transaction in flight at a time', () => {
     it('does not start a second dispense while one is in flight', async () => {
       const { node, custody, deps } = rig()
-      const first = await queue(ALICE, 'ip:one')
-      const second = await queue(BOB, 'ip:two')
+      const first = await queue(ALICE, testRequesterKey(1))
+      const second = await queue(BOB, testRequesterKey(2))
 
       await driveChain(deps)
       assert.equal(custody.signatures.length, 1)
@@ -400,8 +401,8 @@ describe('dispensing', { skip }, () => {
      * directly, as a second worker past its lease would.
      */
     it('the schema refuses a second in-flight dispense', async () => {
-      const id = await queue(ALICE, 'ip:one')
-      const other = await queue(BOB, 'ip:two')
+      const id = await queue(ALICE, testRequesterKey(1))
+      const other = await queue(BOB, testRequesterKey(2))
       await sql`update dispenses set status = 'signing' where id = ${id}::uuid`
       await assert.rejects(
         sql`update dispenses set status = 'signing' where id = ${other}::uuid`,

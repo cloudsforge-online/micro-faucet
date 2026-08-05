@@ -33,6 +33,7 @@ import { AlreadyKnownError, RpcError, RpcUnavailableError, type Rpc, type Transa
 import type { CustodyClient, SignedResult, UnsignedDrip } from './custodyclient.ts'
 import { CustodySignRefusedError, CustodyUnavailableError } from './custodyclient.ts'
 import type { LimitConfig } from './limits.ts'
+import { requesterKey, type RequesterConfig } from './requester.ts'
 import type { DispenseDeps } from './dispense.ts'
 
 /** Spelled exactly as the reusable CI workflow exports it. See the file header. */
@@ -102,6 +103,45 @@ export function testLimits(overrides: Partial<LimitConfig> = {}): LimitConfig {
     budgetWindowSeconds: 3_600,
     ...overrides,
   }
+}
+
+/**
+ * The pseudonymisation config a test runs under, and the helper that produces a legal requester.
+ *
+ * `testRequesterKey` exists because `faucet_requester_grants_pseudonymous` and
+ * `dispenses_requester_pseudonymous` mean a test can no longer make up a requester — `'ip:test'`
+ * is now refused by the database, which is the entire point of the constraint. Every case that
+ * needs "some requester" derives one the way the server does, so a test that starts passing a raw
+ * value fails on the constraint the production path is held to rather than on a fixture.
+ */
+export function testRequester(overrides: Partial<RequesterConfig> = {}): RequesterConfig {
+  return {
+    // Long enough to pass `requiredSecret`'s bar, and obviously not a real one.
+    salt: 'a-test-only-requester-salt-0000000000',
+    retentionSeconds: 172_800,
+    ...overrides,
+  }
+}
+
+/**
+ * A legal requester key for a test. `network` indexes a DISTINCT network, not a distinct host.
+ *
+ * **It takes a number rather than an address on purpose, and the reason is a bug this caught.**
+ * The first version of these fixtures used `198.51.100.1` and `198.51.100.2` for "two different
+ * requesters" — which is now ONE requester, because both are in one /24 and the truncation is the
+ * point. A test that spells its requesters as addresses invites that mistake every time somebody
+ * adds a case. A number cannot: `1` and `2` are two /48s of 2001:db8::/32, the range RFC 3849
+ * reserves for documentation, and they are always different buckets.
+ *
+ * The instant is FIXED rather than `new Date()`. The salt rotates on a clock, so a key derived at
+ * the top of a file and a key derived inside a case would be different values on the one run in a
+ * thousand that straddles a boundary — a test that fails once a fortnight for a reason nobody can
+ * reproduce. Cases that are about rotation pass their own `at`.
+ */
+export const TEST_INSTANT = new Date('2026-08-05T12:00:00.000Z')
+
+export function testRequesterKey(network = 7, at: Date = TEST_INSTANT): string {
+  return requesterKey(`2001:db8:${network.toString(16)}::1`, testRequester(), at)
 }
 
 /* ------------------------------------------------------------------ a fake node */

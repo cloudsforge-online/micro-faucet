@@ -42,10 +42,19 @@
  *      surfaces four layers later as an unreadable driver error.
  *   2. **A known placeholder is refused outright.** A default secret in source is not convenient,
  *      it is catastrophic, and a placeholder that boots is a placeholder that reaches production.
+ *
+ * **THE ONE PIECE OF SECRET MATERIAL THIS PROCESS DOES HOLD IS `FAUCET_REQUESTER_SALT`**, and it
+ * is not a credential — it is the pseudonymisation key for `faucet_requester_grants.requester`
+ * (`requester.ts`, and `micro-org#163`). It is OPTIONAL and derived from `FAUCET_TOKEN` when
+ * unset, which is a deliberate refusal to ship a constant default: a pseudonymisation key
+ * committed to a repository is a pseudonymisation key that does not exist. A deployment that wants
+ * the two rotated independently sets the variable; one that does not still gets a salt as strong
+ * as the secret it already had to provide. Neither value is ever logged.
  */
 
 import { hostname } from 'node:os'
 import { CHAINS, type Network } from '@cloudsforge/contracts-chain'
+import { deriveRequesterSalt } from './requester.ts'
 
 /**
  * The service's own name. A constant rather than a variable: it is a property of the repository,
@@ -123,6 +132,19 @@ function requiredSecret(source: Source, name: string, minLength = 24): string {
     throw new EnvError(`${name} must be at least ${minLength} characters (got ${value.length})`)
   }
   return value
+}
+
+/**
+ * A secret the deployment MAY provide, held to the same bar as one it must.
+ *
+ * Absent is a supported answer; present-but-weak is not. The alternative — accepting whatever is
+ * set because the variable is optional — is how a placeholder ends up being the thing that
+ * pseudonymises personal data, and it would boot and pass every test.
+ */
+function optionalSecret(source: Source, name: string, minLength: number): string | undefined {
+  const value = source[name]?.trim()
+  if (!value) return undefined
+  return requiredSecret(source, name, minLength)
 }
 
 function optional(source: Source, name: string, fallback: string): string {
@@ -256,8 +278,31 @@ export interface Env {
 
   readonly limits: Limits
 
+  /** How the per-requester counter is keyed without storing an address. See `requester.ts`. */
+  readonly requester: RequesterPrivacy
+
   /** Dispense rows kept after they reach a terminal state. Operator forensics, then pruned. */
   readonly retentionDays: number
+}
+
+export interface RequesterPrivacy {
+  /**
+   * The pseudonymisation secret for `faucet_requester_grants.requester`. **Never logged, never
+   * returned, never written to the database** — it is the whole reason a stored key cannot be
+   * turned back into a network, and a key held beside the data it protects protects nothing.
+   */
+  readonly salt: string
+  /**
+   * Seconds a requester row may exist, AND the salt's rotation period, because they are one event:
+   * when the salt rotates every key derived under the old one is unreachable, so deleting those
+   * rows IS the retention enforcement rather than a second policy that could disagree with it.
+   *
+   * Bounded to a small multiple of `requesterWindowSeconds` by the check in `loadEnv`. Nothing
+   * needs a row older than the window it bounds, which is why this is NOT `FAUCET_RETENTION_DAYS`:
+   * thirty days of dispense forensics is a defensible period for a payout ledger and an
+   * indefensible one for a rate-limiter's counter.
+   */
+  readonly retentionSeconds: number
 }
 
 const LEVELS = new Set(['debug', 'info', 'warn', 'error'])
@@ -307,6 +352,33 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     )
   }
 
+  const requesterWindowSeconds = integer(source, 'FAUCET_REQUESTER_WINDOW_SECONDS', 86_400, 1, 31_536_000)
+
+  /* ── The requester's privacy budget. See `requester.ts` for the whole argument. ─────────── */
+  const token = requiredSecret(source, 'FAUCET_TOKEN')
+  const requesterSalt = optionalSecret(source, 'FAUCET_REQUESTER_SALT', 32) ?? deriveRequesterSalt(token)
+  // Two days by default — two windows, not thirty. The floor is the window itself and the ceiling
+  // is thirty days, which is only reachable by an operator who has also widened the window.
+  const requesterRetentionSeconds = integer(
+    source,
+    'FAUCET_REQUESTER_RETENTION_SECONDS',
+    172_800,
+    60,
+    2_592_000,
+  )
+  if (requesterRetentionSeconds < requesterWindowSeconds) {
+    // Refused rather than clamped. A retention period shorter than the window it is supposed to
+    // outlive deletes rows that are still counting, which hands every requester an unlimited
+    // supply of drips — a privacy setting that silently disables a rate limit, discovered by
+    // reading a budget that has gone.
+    throw new EnvError(
+      `FAUCET_REQUESTER_RETENTION_SECONDS (${requesterRetentionSeconds}) is below ` +
+        `FAUCET_REQUESTER_WINDOW_SECONDS (${requesterWindowSeconds}) — the prune would delete ` +
+        'counters that are still inside the window they bound, and the per-requester limit would ' +
+        'stop refusing anybody',
+    )
+  }
+
   return {
     port: integer(source, 'PORT', 4013, 1, 65_535),
     env: optional(source, 'NODE_ENV', 'development'),
@@ -318,7 +390,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
     identityIssuer: required(source, 'IDENTITY_ISSUER'),
     instanceId: optional(source, 'INSTANCE_ID', host || 'unknown'),
 
-    token: requiredSecret(source, 'FAUCET_TOKEN'),
+    token,
 
     rpcUrl: url(source, 'FAUCET_RPC_URL'),
     rpcDeadlineMs: integer(source, 'FAUCET_RPC_DEADLINE_MS', 10_000, 100, 120_000),
@@ -336,11 +408,16 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
       dripWei,
       addressCooldownSeconds: integer(source, 'FAUCET_ADDRESS_COOLDOWN_SECONDS', 86_400, 1, 31_536_000),
       requesterLimit: integer(source, 'FAUCET_REQUESTER_LIMIT', 3, 1, 10_000),
-      requesterWindowSeconds: integer(source, 'FAUCET_REQUESTER_WINDOW_SECONDS', 86_400, 1, 31_536_000),
+      requesterWindowSeconds,
       budgetWei,
       budgetWindowSeconds: integer(source, 'FAUCET_BUDGET_WINDOW_SECONDS', 86_400, 1, 31_536_000),
       maxRecipientBalanceWei,
       reserveWei: ember(source, 'FAUCET_RESERVE_EMBER', '1'),
+    },
+
+    requester: {
+      salt: requesterSalt,
+      retentionSeconds: requesterRetentionSeconds,
     },
 
     retentionDays: integer(source, 'FAUCET_RETENTION_DAYS', 30, 1, 3_650),

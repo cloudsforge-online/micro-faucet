@@ -61,6 +61,8 @@ import {
   testAddress,
   testLimits,
   testMetrics,
+  testRequester,
+  testRequesterKey,
 } from './testsupport.ts'
 
 describe('two replicas', { skip }, () => {
@@ -118,8 +120,8 @@ describe('two replicas', { skip }, () => {
     it('under the chain lease, exactly one of two runners signs', async () => {
       const node = fundedNode()
       const custody = fakeCustody()
-      await accept(ALICE, 'ip:one')
-      await accept(BOB, 'ip:two')
+      await accept(ALICE, testRequesterKey(1))
+      await accept(BOB, testRequesterKey(2))
 
       const runners = ['replica-a', 'replica-b'].map((owner) => {
         const queue = new JobQueue(sql as unknown as JobsSql, { owner, leaseMs: 60_000 })
@@ -129,6 +131,7 @@ describe('two replicas', { skip }, () => {
           logger: quietLogger(),
           metrics: testMetrics(),
           retentionDays: 30,
+          requester: testRequester(),
         })
         return { queue, runner }
       })
@@ -157,8 +160,8 @@ describe('two replicas', { skip }, () => {
     it('with no lease at all, the schema still permits only one signature', async () => {
       const node = fundedNode()
       const custody = fakeCustody()
-      await accept(ALICE, 'ip:one')
-      await accept(BOB, 'ip:two')
+      await accept(ALICE, testRequesterKey(1))
+      await accept(BOB, testRequesterKey(2))
 
       const workers = [harness(sql, { node, custody, limits }), harness(sql, { node, custody, limits })]
       const outcomes = await Promise.allSettled(workers.map((deps) => driveChain(deps)))
@@ -181,7 +184,7 @@ describe('two replicas', { skip }, () => {
     it('four workers at once still produce one signature', async () => {
       const node = fundedNode()
       const custody = fakeCustody()
-      for (let i = 0; i < 4; i++) await accept(testAddress(0xc0 + i), `ip:${i}`)
+      for (let i = 0; i < 4; i++) await accept(testAddress(0xc0 + i), testRequesterKey(0x100 + i))
 
       const workers = Array.from({ length: 4 }, () => harness(sql, { node, custody, limits }))
       await Promise.allSettled(workers.map((deps) => driveChain(deps)))
@@ -198,7 +201,7 @@ describe('two replicas', { skip }, () => {
       const node = fundedNode()
       const custody = fakeCustody()
       const ids: string[] = []
-      for (let i = 0; i < 4; i++) ids.push((await accept(testAddress(0xd0 + i), `ip:${i}`)).id)
+      for (let i = 0; i < 4; i++) ids.push((await accept(testAddress(0xd0 + i), testRequesterKey(0x100 + i))).id)
 
       const workers = [harness(sql, { node, custody, limits }), harness(sql, { node, custody, limits })]
 
@@ -240,7 +243,7 @@ describe('two replicas', { skip }, () => {
      */
     it('ten concurrent requests for one address create exactly one dispense', async () => {
       const results = await Promise.allSettled(
-        Array.from({ length: 10 }, (_v, i) => accept(ALICE, `ip:${i}`)),
+        Array.from({ length: 10 }, (_v, i) => accept(ALICE, testRequesterKey(0x100 + i))),
       )
 
       const accepted = results.filter(
@@ -278,7 +281,7 @@ describe('two replicas', { skip }, () => {
       const retry = () =>
         acceptDrip(
           { sql: db(sql), chainId: TESTNET_CHAIN_ID, fundingAddress: FUNDING_ADDRESS, limits },
-          { address: ALICE, requester: 'ip:one', idempotencyKey: key },
+          { address: ALICE, requester: testRequesterKey(1), idempotencyKey: key },
         )
 
       const results = await Promise.allSettled(Array.from({ length: 10 }, retry))
@@ -308,7 +311,7 @@ describe('two replicas', { skip }, () => {
         Array.from({ length: 20 }, (_v, i) =>
           acceptDrip(
             { sql: db(sql), chainId: TESTNET_CHAIN_ID, fundingAddress: FUNDING_ADDRESS, limits: small },
-            { address: testAddress(0xe000 + i), requester: 'ip:one' },
+            { address: testAddress(0xe000 + i), requester: testRequesterKey(1) },
           ),
         ),
       )
@@ -325,14 +328,14 @@ describe('two replicas', { skip }, () => {
      * committed.
      */
     it('the schema refuses a second live dispense for one address', async () => {
-      const first = await accept(ALICE, 'ip:one')
+      const first = await accept(ALICE, testRequesterKey(1))
       assert.equal(first.duplicate, false)
       await sql`delete from faucet_address_grants`
 
       await assert.rejects(
         sql`
           insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint)
-          values (${ALICE.toLowerCase()}, 'ip:two', 'queued', ${limits.dripWei.toString(10)}::numeric,
+          values (${ALICE.toLowerCase()}, ${testRequesterKey(2)}, 'queued', ${limits.dripWei.toString(10)}::numeric,
                   ${TESTNET_CHAIN_ID}, 'a-different-fingerprint')
         `,
         (err: unknown) => {
@@ -354,7 +357,7 @@ describe('two replicas', { skip }, () => {
       const fresh = (key: string) =>
         acceptDrip(
           { sql: db(sql), chainId: TESTNET_CHAIN_ID, fundingAddress: FUNDING_ADDRESS, limits },
-          { address: ALICE, requester: 'ip:one', idempotencyKey: key },
+          { address: ALICE, requester: testRequesterKey(1), idempotencyKey: key },
         )
       const first = await fresh('day-one')
       await settle(first.id)
@@ -371,10 +374,10 @@ describe('two replicas', { skip }, () => {
      * inside one cooldown are ONE request, answered with one dispense, however the grant rows look.
      */
     it('two keyless requests inside one cooldown are one request', async () => {
-      const first = await accept(ALICE, 'ip:one')
+      const first = await accept(ALICE, testRequesterKey(1))
       await settle(first.id)
       await sql`delete from faucet_address_grants`
-      const second = await accept(ALICE, 'ip:two')
+      const second = await accept(ALICE, testRequesterKey(2))
       assert.equal(second.duplicate, true)
       assert.equal(second.id, first.id)
     })

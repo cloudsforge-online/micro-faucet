@@ -36,6 +36,7 @@ import {
   testAddress,
   testLimits,
   testMetrics,
+  testRequester,
   type FakeCustody,
   type FakeNode,
 } from './testsupport.ts'
@@ -83,6 +84,7 @@ describe('the http surface', { skip }, () => {
       chainId: TESTNET_CHAIN_ID,
       fundingAddress: FUNDING_ADDRESS,
       limits,
+      requester: testRequester(),
       corsOrigins: [ORIGIN],
       beforeScrape: scrapeRefresh({ sql: db(sql), metrics, limits }),
     })
@@ -239,17 +241,89 @@ describe('the http surface', { skip }, () => {
       assert.equal((await drip({ address: ALICE, pad: 'x'.repeat(8_000) })).status, 400)
     })
 
-    it('reads the first hop of x-forwarded-for as the requester and nothing further', async () => {
-      const small = { 'x-forwarded-for': '198.51.100.9, 10.0.0.1, 10.0.0.2' }
-      await drip({ address: ALICE }, small)
-      const rows = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
-      assert.equal(rows[0]?.requester, 'ip:198.51.100.9')
+    /* ── WHAT REACHES THE DATABASE WHEN A REAL ADDRESS ARRIVES. micro-org#163. ────────────────
+     *
+     * These four run over a real socket with a real forwarded header, so they observe the value
+     * the estate would actually store rather than what `requesterKey` returns in isolation —
+     * which is what `requester.test.ts` already proves. Two things are being asserted here that
+     * only the full path can show: that the header reaches the derivation at all, and that the
+     * address does not reach the row.
+     *
+     * The addresses are documentation-range (RFC 5737 / RFC 3849) and no case prints one.
+     */
+    it('stores no part of the client address, in either column that holds a requester', async () => {
+      await drip({ address: ALICE }, { 'x-forwarded-for': '198.51.100.9, 10.0.0.1, 10.0.0.2' })
+
+      const dispenses = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
+      const grants = (await sql`select requester from faucet_requester_grants`) as ReadonlyArray<{
+        requester: string
+      }>
+      assert.equal(dispenses.length, 1)
+      assert.equal(grants.length, 1)
+
+      for (const stored of [dispenses[0]?.requester, grants[0]?.requester]) {
+        assert.match(stored ?? '', /^r1:[0-9a-f]{32}$/)
+        // The address, and every octet of it that is longer than one character. A shape assertion
+        // alone would pass on a key with the address appended.
+        assert.ok(!stored?.includes('198.51.100.9'))
+        for (const octet of ['198', '51', '100']) assert.ok(!stored?.includes(octet))
+      }
     })
 
-    it('bounds the requester before it becomes a primary key', async () => {
+    it('keys the two columns on the same value, so the ledger and the counter agree', async () => {
+      await drip({ address: ALICE }, { 'x-forwarded-for': '198.51.100.9' })
+      const [row] = (await sql`
+        select d.requester as ledger, g.requester as counter
+          from dispenses d join faucet_requester_grants g on g.requester = d.requester
+      `) as ReadonlyArray<{ ledger: string; counter: string }>
+      assert.equal(row?.ledger, row?.counter)
+    })
+
+    it('reads the first hop of x-forwarded-for and nothing further', async () => {
+      // Still the first hop only — everything past it is attacker-appendable. Observed through
+      // the derivation: a request naming the first hop alone must land in the same bucket as one
+      // that names it with proxies behind it.
+      await drip({ address: ALICE }, { 'x-forwarded-for': '198.51.100.9, 10.0.0.1, 10.0.0.2' })
+      const withHops = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
+      await sql`truncate dispenses, faucet_requester_grants, faucet_address_grants cascade`
+
+      await drip({ address: ALICE }, { 'x-forwarded-for': '198.51.100.9' })
+      const alone = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
+      assert.equal(withHops[0]?.requester, alone[0]?.requester)
+
+      // …and a DIFFERENT first hop is a different bucket, or the assertion above would hold for a
+      // derivation that ignored the header entirely.
+      await sql`truncate dispenses, faucet_requester_grants, faucet_address_grants cascade`
+      await drip({ address: ALICE }, { 'x-forwarded-for': '192.0.2.9, 10.0.0.1' })
+      const other = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
+      assert.notEqual(alone[0]?.requester, other[0]?.requester)
+    })
+
+    it('bounds the requester however long the header was', async () => {
       await drip({ address: ALICE }, { 'x-forwarded-for': 'a'.repeat(500) })
       const rows = (await sql`select requester from dispenses`) as ReadonlyArray<{ requester: string }>
-      assert.ok((rows[0]?.requester.length ?? 0) <= 68, 'an unbounded header must not become an unbounded row')
+      // 35 characters, always: the length is a property of the derivation now and not of the
+      // caller's header, so an unbounded header cannot become an unbounded row.
+      assert.equal(rows[0]?.requester.length, 35)
+    })
+
+    it('refuses a raw address written past the handler, which is what makes this permanent', async () => {
+      // The constraint, not the convention. `server.ts` could be reverted tomorrow; this is what
+      // would stop the revert from committing a row.
+      await assert.rejects(
+        sql`
+          insert into faucet_requester_grants (requester, window_started_at, grants, last_granted_at)
+          values ('ip:198.51.100.9', now(), 1, now())
+        `,
+        /faucet_requester_grants_pseudonymous/,
+      )
+      await assert.rejects(
+        sql`
+          insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint)
+          values (${ALICE.toLowerCase()}, 'ip:198.51.100.9', 'queued', 1, ${TESTNET_CHAIN_ID}, 'raw-ip')
+        `,
+        /dispenses_requester_pseudonymous/,
+      )
     })
   })
 
@@ -397,6 +471,7 @@ describe('the http surface', { skip }, () => {
         chainId: TESTNET_CHAIN_ID,
         fundingAddress: FUNDING_ADDRESS,
         limits,
+        requester: testRequester(),
         corsOrigins: [],
       })
       await new Promise<void>((resolve) => broken.listen(0, '127.0.0.1', () => resolve()))

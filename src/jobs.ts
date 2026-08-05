@@ -34,6 +34,7 @@ import { type JobQueue, type JobRunner, type RunnerEvent } from '@cloudsforge/jo
 import type { Db } from './db.ts'
 import type { Logger, Metrics } from '@cloudsforge/telemetry'
 import { driveChain, type DispenseDeps } from './dispense.ts'
+import { requesterEpoch, type RequesterConfig } from './requester.ts'
 
 export const DISPENSE_KIND = 'chain.dispense'
 export const RETENTION_KIND = 'retention'
@@ -89,6 +90,8 @@ export interface JobDeps {
   readonly logger: Logger
   readonly metrics: Metrics
   readonly retentionDays: number
+  /** The requester counters' retention period. See `requester.ts` and `pruneRequesters` below. */
+  readonly requester: RequesterConfig
 }
 
 export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
@@ -113,6 +116,20 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
   runner.register(RETENTION_KIND, async () => {
     const pruned = await pruneSettled(deps.dispense.sql, deps.retentionDays)
     if (pruned > 0) deps.logger.info('pruned settled dispenses', { pruned })
+
+    // The other half of retention, and the one with a regulator behind it. Runs on the SAME tick
+    // as the dispense prune so there is one recurring job to keep alive rather than two, and so an
+    // operator watching `jobs_dead_total` for `retention` is watching both.
+    const requesters = await pruneRequesters(deps.dispense.sql, deps.requester.retentionSeconds)
+    if (requesters > 0) {
+      // A count and an epoch. Never a requester key, which is pseudonymous but is still a
+      // per-network identifier, and never anything derived from an address.
+      deps.logger.info('pruned requester counters', {
+        pruned: requesters,
+        epoch: requesterEpoch(deps.requester.retentionSeconds),
+        retentionSeconds: deps.requester.retentionSeconds,
+      })
+    }
   })
 
   return runner
@@ -127,13 +144,52 @@ export function registerHandlers(runner: JobRunner, deps: JobDeps): JobRunner {
  * destroy the only record that it exists.
  *
  * `faucet_address_grants` is NOT pruned here, and that is deliberate. A grant row is what the
- * cooldown is made of, and deleting one hands its address a fresh drip.
+ * cooldown is made of, and deleting one hands its address a fresh drip. It holds an EMBER address,
+ * which is public on chain and is not a person — so the argument that forces `pruneRequesters`
+ * below to exist does not reach it.
  */
 export async function pruneSettled(sql: Db, days: number): Promise<number> {
   const result = await sql`
     delete from dispenses
      where status in ('confirmed','failed')
        and settled_at < now() - make_interval(days => ${days})
+  `
+  return (result as unknown as { count?: number }).count ?? 0
+}
+
+/**
+ * Enforce the requester counters' retention period. **This is the erasure, and it runs.**
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * A retention policy that nothing executes is a comment. `faucet_requester_grants` had one for
+ * exactly as long as it had a primary key made of IP addresses — which is to say it had none, and
+ * nothing in the repository said so. This is the recurring job that makes the period in
+ * `env.ts` a fact about the database rather than a claim in a document. micro-org#163.
+ *
+ * It is registered on the EXISTING `retention` recurring job (RECURRING, above), which is claimed
+ * by `@cloudsforge/jobs` with `for update skip locked` and re-armed from its completion event —
+ * rule 8, no `setInterval` doing domain work, and CI greps for one. A dead-lettered retention job
+ * is not re-armed, so a prune that has stopped running climbs `jobs_dead_total` and is visible
+ * rather than silently absent.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ON `window_started_at` RATHER THAN `last_granted_at`, and it matters. The window start is when
+ * the counter this row represents began; the last grant only moves within it. Deleting on the
+ * window start bounds the row by the thing it is counting, and it is the column
+ * `faucet_requester_grants_window_idx` covers.
+ *
+ * Every row this deletes is already unusable: `env.ts` refuses a retention period shorter than
+ * `FAUCET_REQUESTER_WINDOW_SECONDS`, so a row past the horizon is a row whose window rolled long
+ * ago, and the next reservation from that requester would have reset it to 1 anyway. **Nothing is
+ * lost and nobody gains a drip** — which is why this is a plain delete and not a decision.
+ *
+ * Belt and braces with the salt rotation: rotation makes an old row unreachable, this makes it
+ * absent. Unreachable is not erased, and Art. 5(1)(e) is about the second one.
+ */
+export async function pruneRequesters(sql: Db, retentionSeconds: number): Promise<number> {
+  const result = await sql`
+    delete from faucet_requester_grants
+     where window_started_at < now() - make_interval(secs => ${retentionSeconds})
   `
   return (result as unknown as { count?: number }).count ?? 0
 }

@@ -11,7 +11,17 @@ import { after, before, beforeEach, describe, it } from 'node:test'
 import { JobQueue, JobRunner, type Sql as JobsSql } from '@cloudsforge/jobs'
 import type postgres from 'postgres'
 import { BASELINE_VERSION, IN_FLIGHT_STATES, LIVE_STATES, MIGRATIONS, SCHEMA_VERSION, TABLES } from './migrations.ts'
-import { CHAIN_KEY, DISPENSE_KIND, RECURRING, RETENTION_KIND, pruneSettled, registerHandlers, seedRecurring } from './jobs.ts'
+import {
+  CHAIN_KEY,
+  DISPENSE_KIND,
+  RECURRING,
+  RETENTION_KIND,
+  pruneRequesters,
+  pruneSettled,
+  registerHandlers,
+  seedRecurring,
+} from './jobs.ts'
+import { REQUESTER_KEY_PATTERN, REQUESTER_KEY_SQL_PATTERN } from './requester.ts'
 import type { Db } from './db.ts'
 import {
   FUNDING_ADDRESS,
@@ -28,6 +38,8 @@ import {
   testAddress,
   testLimits,
   testMetrics,
+  testRequester,
+  testRequesterKey,
 } from './testsupport.ts'
 
 describe('the schema', { skip }, () => {
@@ -51,7 +63,7 @@ describe('the schema', { skip }, () => {
   const insert = (overrides: Record<string, unknown> = {}) => {
     const row = {
       recipient: ALICE.toLowerCase(),
-      requester: 'ip:test',
+      requester: testRequesterKey(7),
       status: 'queued',
       amount_wei: '10000000000000000000',
       chain_id: TESTNET_CHAIN_ID,
@@ -184,6 +196,63 @@ describe('the schema', { skip }, () => {
       )
     })
   })
+
+  /* ------------------------------------------ a requester cannot be an address */
+
+  /**
+   * Written DIRECTLY, as the file header says: an operator with psql, a backfill script, a revert
+   * of `server.ts`. The point of putting this in the schema rather than only in the handler is
+   * that it holds against a writer who has never read `requester.ts`.
+   */
+  describe('a requester cannot be an address', () => {
+    it('refuses a raw address, a prefixed one, and a bare network prefix', async () => {
+      for (const bad of ['203.0.113.7', 'ip:203.0.113.7', '2001:db8::1', '203.0.113.0/24', 'ip:unknown', '']) {
+        await assert.rejects(
+          sql`
+            insert into faucet_requester_grants (requester, window_started_at, grants, last_granted_at)
+            values (${bad}, now(), 1, now())
+          `,
+          /faucet_requester_grants_pseudonymous/,
+          `the schema accepted ${JSON.stringify(bad)} as a requester`,
+        )
+      }
+    })
+
+    it('refuses one in the ledger too, which is the second copy of the same value', async () => {
+      await assert.rejects(
+        sql`
+          insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint)
+          values (${ALICE.toLowerCase()}, '203.0.113.7', 'queued', 1, ${TESTNET_CHAIN_ID}, 'fp-raw-ip')
+        `,
+        /dispenses_requester_pseudonymous/,
+      )
+    })
+
+    it('accepts a key the service actually derives', async () => {
+      await sql`
+        insert into faucet_requester_grants (requester, window_started_at, grants, last_granted_at)
+        values (${testRequesterKey(0x50)}, now(), 1, now())
+      `
+      const rows = (await sql`select count(*)::int as n from faucet_requester_grants`) as ReadonlyArray<{ n: number }>
+      assert.equal(rows[0]?.n, 1)
+    })
+
+    /**
+     * The regex is written twice — once in `requester.ts` for the handler and once in migration 4
+     * for the database — so this is what stops the two from drifting into a state where one of
+     * them accepts a value the other refuses.
+     */
+    it('states the same pattern the derivation does', () => {
+      const migration = MIGRATIONS.find((m) => m.version === 4)
+      assert.ok(migration, 'migration 4 is missing')
+      assert.ok(
+        migration.up.includes(REQUESTER_KEY_SQL_PATTERN),
+        'migration 4 no longer contains requester.ts\'s REQUESTER_KEY_SQL_PATTERN',
+      )
+      assert.equal(REQUESTER_KEY_PATTERN.source, REQUESTER_KEY_SQL_PATTERN)
+    })
+  })
+
 })
 
 /* ================================================================ jobs */
@@ -233,6 +302,7 @@ describe('leased jobs', { skip }, () => {
       logger: quietLogger(),
       metrics: testMetrics(),
       retentionDays: 30,
+      requester: testRequester(),
     })
     // `register` throws on a duplicate kind, so registering each again proves each was registered
     // exactly once and that the set matches RECURRING.
@@ -245,7 +315,7 @@ describe('leased jobs', { skip }, () => {
     const settled = (status: 'confirmed' | 'failed', ageDays: number, i: number) => sql`
       insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint,
                              nonce, raw_tx, tx_hash, block_number, failure_reason, settled_at)
-      values (${testAddress(0x1000 + i).toLowerCase()}, 'ip:t', ${status}, 1, ${TESTNET_CHAIN_ID},
+      values (${testAddress(0x1000 + i).toLowerCase()}, ${testRequesterKey()}, ${status}, 1, ${TESTNET_CHAIN_ID},
               ${`fp-${status}-${i}`}, 0, '0xab', ${`0x${i.toString(16).padStart(64, 'a')}`},
               ${status === 'confirmed' ? 1 : null},
               ${status === 'failed' ? 'because' : null},
@@ -271,7 +341,7 @@ describe('leased jobs', { skip }, () => {
       await sql`
         insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint,
                                nonce, raw_tx, tx_hash, created_at)
-        values (${testAddress(0x2000).toLowerCase()}, 'ip:t', 'broadcast', 1, ${TESTNET_CHAIN_ID}, 'stuck',
+        values (${testAddress(0x2000).toLowerCase()}, ${testRequesterKey()}, 'broadcast', 1, ${TESTNET_CHAIN_ID}, 'stuck',
                 0, '0xab', ${`0x${'f'.repeat(64)}`}, now() - interval '400 days')
       `
       assert.equal(await pruneSettled(sql as unknown as Db, 1), 0)
@@ -285,6 +355,100 @@ describe('leased jobs', { skip }, () => {
       assert.equal(rows[0]?.n, 1)
     })
   })
+
+  /* ============================================ the requester counters' retention. #163 */
+
+  /**
+   * **THE HALF OF A RETENTION POLICY THAT USUALLY DOES NOT EXIST.**
+   *
+   * `faucet_requester_grants` was never pruned by anything. A period in a config file that no code
+   * reads is the "check that cannot fail" pattern wearing a compliance hat, so these cases assert
+   * the DELETE, not the number: that it removes what is past the horizon, that it removes it
+   * whatever the row's other columns say, and that it leaves everything inside the horizon alone.
+   */
+  describe('requester retention', () => {
+    const counter = (network: number, ageSeconds: number) => sql`
+      insert into faucet_requester_grants (requester, window_started_at, grants, last_granted_at)
+      values (${testRequesterKey(network)}, now() - make_interval(secs => ${ageSeconds}), 1,
+              now() - make_interval(secs => ${ageSeconds}))
+    `
+
+    it('deletes counters past the horizon and keeps the ones inside it', async () => {
+      await counter(0x10, 200_000) // older than two days
+      await counter(0x11, 300_000)
+      await counter(0x12, 3_600) // an hour old; still counting
+      const pruned = await pruneRequesters(sql as unknown as Db, 172_800)
+      assert.equal(pruned, 2)
+      const rows = (await sql`select count(*)::int as n from faucet_requester_grants`) as ReadonlyArray<{ n: number }>
+      assert.equal(rows[0]?.n, 1)
+    })
+
+    /**
+     * On `window_started_at`, not `last_granted_at`. A requester that keeps asking moves the
+     * latter for ever; bounding the row by the window it counts is what makes the period finite.
+     */
+    it('bounds a row by the window it counts, not by its last activity', async () => {
+      await sql`
+        insert into faucet_requester_grants (requester, window_started_at, grants, last_granted_at)
+        values (${testRequesterKey(0x20)}, now() - interval '30 days', 1, now())
+      `
+      assert.equal(await pruneRequesters(sql as unknown as Db, 172_800), 1)
+    })
+
+    it('leaves the address cooldowns and the ledger alone', async () => {
+      await sql`insert into faucet_address_grants (recipient, last_granted_at) values (${testAddress(0x3100).toLowerCase()}, now() - interval '400 days')`
+      await sql`
+        insert into dispenses (recipient, requester, status, amount_wei, chain_id, fingerprint,
+                               nonce, raw_tx, tx_hash, block_number, settled_at)
+        values (${testAddress(0x3200).toLowerCase()}, ${testRequesterKey()}, 'confirmed', 1,
+                ${TESTNET_CHAIN_ID}, 'fp-keep-me', 0, '0xab', ${`0x${'c'.repeat(64)}`}, 1,
+                now() - interval '400 days')
+      `
+      await counter(0x30, 400_000)
+      assert.equal(await pruneRequesters(sql as unknown as Db, 172_800), 1)
+      const grants = (await sql`select count(*)::int as n from faucet_address_grants`) as ReadonlyArray<{ n: number }>
+      const ledger = (await sql`select count(*)::int as n from dispenses`) as ReadonlyArray<{ n: number }>
+      assert.equal(grants[0]?.n, 1)
+      assert.equal(ledger[0]?.n, 1)
+    })
+
+    /**
+     * The prune has to actually RUN, which is the whole complaint. `retention` is in `RECURRING`
+     * with an hourly period and a registered handler (asserted above), so this drives the handler
+     * itself rather than the exported function, and proves the wiring rather than the SQL.
+     */
+    it('is what the recurring retention handler does, not just an exported function', async () => {
+      await counter(0x40, 400_000)
+      await counter(0x41, 60)
+
+      const queue = new JobQueue(sql as unknown as JobsSql, { owner: 'retention-test', leaseMs: 60_000 })
+      const runner = new JobRunner({ queue, concurrency: 1, pollMs: 10 })
+      registerHandlers(runner, {
+        dispense: harness(sql, { node: fundedNode(), custody: fakeCustody(), limits: testLimits() }),
+        logger: quietLogger(),
+        metrics: testMetrics(),
+        retentionDays: 30,
+        requester: testRequester({ retentionSeconds: 172_800 }),
+      })
+      await queue.enqueue({ kind: RETENTION_KIND, key: 'global', payload: {} })
+      runner.start()
+      // The handler is one DELETE; a second of polling is many times what it needs.
+      const deadline = Date.now() + 5_000
+      let left = 2
+      while (Date.now() < deadline && left > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        const rows = (await sql`select count(*)::int as n from faucet_requester_grants`) as ReadonlyArray<{
+          n: number
+        }>
+        left = rows[0]?.n ?? 0
+      }
+      await runner.stop(5_000)
+      assert.equal(left, 1, 'the recurring retention job did not prune the expired counter')
+    })
+  })
+
+  /* ============================================ the constraint that makes it permanent */
+
 })
 
 /* ================================================================ no timers */

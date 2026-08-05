@@ -24,13 +24,14 @@ import {
   skip,
   testAddress,
   testLimits,
+  testRequesterKey,
 } from './testsupport.ts'
 
 describe('the limits are the database', { skip }, () => {
   let sql: postgres.Sql
   const ALICE = testAddress(0xa1)
   const BOB = testAddress(0xb0)
-  const IP = 'ip:203.0.113.7'
+  const IP = testRequesterKey(3)
 
   before(async () => {
     if (!enabled) return
@@ -59,7 +60,7 @@ describe('the limits are the database', { skip }, () => {
   describe('the per-address cooldown', () => {
     it('grants the first request and refuses the second', async () => {
       assert.deepEqual(await take(ALICE), { ok: true })
-      const second = await take(ALICE, 'ip:different')
+      const second = await take(ALICE, testRequesterKey(9))
       assert.equal(second.ok, false)
       assert.equal(second.ok === false && second.code, 'address_cooldown')
     })
@@ -67,7 +68,7 @@ describe('the limits are the database', { skip }, () => {
     it('serves a retry-after that is positive and inside the window', async () => {
       const config = testLimits({ addressCooldownSeconds: 600 })
       await take(ALICE, IP, config)
-      const refusal = await take(ALICE, 'ip:different', config)
+      const refusal = await take(ALICE, testRequesterKey(9), config)
       assert.equal(refusal.ok, false)
       if (refusal.ok) return
       assert.ok(refusal.retryAfterSeconds > 0, 'retry-after must never be zero')
@@ -86,7 +87,7 @@ describe('the limits are the database', { skip }, () => {
 
     it('one address in two spellings is one address', async () => {
       assert.deepEqual(await take(ALICE.toLowerCase()), { ok: true })
-      const second = await take(ALICE.toUpperCase().replace('0X', '0x'), 'ip:different')
+      const second = await take(ALICE.toUpperCase().replace('0X', '0x'), testRequesterKey(9))
       assert.equal(second.ok, false)
     })
 
@@ -104,7 +105,7 @@ describe('the limits are the database', { skip }, () => {
      * stand in for ten of them.
      */
     it('ten concurrent requests for one address grant exactly one', async () => {
-      const results = await Promise.all(Array.from({ length: 10 }, () => take(ALICE, 'ip:one')))
+      const results = await Promise.all(Array.from({ length: 10 }, () => take(ALICE, testRequesterKey(1))))
       const granted = results.filter((r) => r.ok)
       assert.equal(granted.length, 1, `expected exactly one grant, got ${granted.length}`)
       const [row] = (await sql`select grants from faucet_address_grants`) as ReadonlyArray<{ grants: string }>
@@ -127,8 +128,8 @@ describe('the limits are the database', { skip }, () => {
 
     it('does not limit a different requester', async () => {
       const config = testLimits({ requesterLimit: 1 })
-      assert.deepEqual(await take(ALICE, 'ip:one', config), { ok: true })
-      assert.deepEqual(await take(BOB, 'ip:two', config), { ok: true })
+      assert.deepEqual(await take(ALICE, testRequesterKey(1), config), { ok: true })
+      assert.deepEqual(await take(BOB, testRequesterKey(2), config), { ok: true })
     })
 
     it('resets when the window rolls', async () => {

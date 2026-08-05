@@ -75,6 +75,9 @@ logger.info('starting', {
   fundingAddress: env.fundingAddress,
   dripWei: env.limits.dripWei.toString(10),
   budgetWei: env.limits.budgetWei.toString(10),
+  // The retention period for the pseudonymous requester counters, so the number an operator is
+  // accountable for is in the boot line rather than only in a compliance note. Never the salt.
+  requesterRetentionSeconds: env.requester.retentionSeconds,
 })
 
 // 3. The database pool. Opened before the schema assertion (which is a query) and before the
@@ -209,6 +212,7 @@ const server = createServer({
   chainId: CHAIN_ID,
   fundingAddress: env.fundingAddress,
   limits: env.limits,
+  requester: env.requester,
   corsOrigins: parseOrigins(process.env['FAUCET_CORS_ORIGINS'] ?? ''),
   // Gauges are sampled at scrape time rather than on a timer. There is no `setInterval` in this
   // repository and CI greps for one — rule 8.
@@ -243,7 +247,13 @@ const runner = new JobRunner({
     reschedule(event)
   },
 })
-registerHandlers(runner, { dispense, logger, metrics, retentionDays: env.retentionDays })
+registerHandlers(runner, {
+  dispense,
+  logger,
+  metrics,
+  retentionDays: env.retentionDays,
+  requester: env.requester,
+})
 await seedRecurring(queue)
 runner.start()
 
