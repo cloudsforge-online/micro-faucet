@@ -5,6 +5,19 @@
 The testnet EMBER faucet. It hands out worthless coins on the Hearth testnet so that a developer
 with an empty address can deploy something.
 
+**It is deployed.** Measured 2026-08-05:
+
+| | |
+| --- | --- |
+| Faucet page | `https://network-testnet.cloudsforge.online/faucet` |
+| Faucet API | `https://network-testnet.cloudsforge.online/v1/faucet` → `200` |
+| Chain it funds | Hearth testnet, chain id **7412** (`0x1cf4`), `https://rpc-testnet.cloudsforge.online` |
+
+There is deliberately **no mainnet faucet** — `network.cloudsforge.online/v1/faucet` answers `404`,
+which is true rather than an outage, and §"what the estate does with that" below is why. Testnet
+hostnames are single-label `<surface>-testnet.cloudsforge.online`; there is no `faucet` subdomain
+and never was.
+
 Design authority: [`ecosystem/03-repository-responsibilities.md`](https://github.com/cloudsforge-online/micro-docs/blob/main/ecosystem/03-repository-responsibilities.md)
 
 It is also **an abuse target that signs transactions**, and everything below follows from that.
