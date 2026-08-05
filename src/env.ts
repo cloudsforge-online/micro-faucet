@@ -50,10 +50,18 @@
  * committed to a repository is a pseudonymisation key that does not exist. A deployment that wants
  * the two rotated independently sets the variable; one that does not still gets a salt as strong
  * as the secret it already had to provide. Neither value is ever logged.
+ *
+ * **THAT DERIVATION IS ALSO WHY `FAUCET_TOKEN` BEING A PLACEHOLDER IS A PRIVACY DEFECT AND NOT
+ * ONLY AN ACCESS ONE.** The estate runs `estate-only-faucet-operator-token-00000`, hardcoded on two
+ * lines of a public compose file, and sets no `FAUCET_REQUESTER_SALT` — so every requester
+ * pseudonym in `faucet_requester_grants` is derivable by anyone who can read the repository. The
+ * guard below refuses that token, which is micro-org #142, and setting a real one is what makes the
+ * pseudonymisation real for the first time.
  */
 
 import { hostname } from 'node:os'
 import { CHAINS, type Network } from '@cloudsforge/contracts-chain'
+import { SecretError, assertGeneratedSecret, assertOpaqueSecret } from '@cloudsforge/secrets'
 import { deriveRequesterSalt } from './requester.ts'
 
 /**
@@ -101,17 +109,28 @@ export class EnvError extends Error {
   }
 }
 
-const PLACEHOLDERS = new Set([
-  'changeme',
-  'change-me',
-  'change_me',
-  'placeholder',
-  'secret',
-  'token',
-  'dev-secret',
-  'replace-with-a-real-secret',
-  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-])
+/**
+ * THE `PLACEHOLDERS` SET THAT USED TO BE HERE IS GONE, AND ITS ABSENCE IS THE FIX.
+ *
+ * It held nine exact strings and was paired with a 24-character floor. Neither could fail for the
+ * value that is in `deploy/compose/docker-compose.estate.yml` on two lines TODAY:
+ * `FAUCET_TOKEN: estate-only-faucet-operator-token-00000` is 39 characters and was on nobody's
+ * list. Measured out of `cloudsforge-estate-faucet-1` on 2026-08-05, so this is not a reading of
+ * the file — it is what the running container holds. Both lines are HARDCODED LITERALS rather than
+ * `${FAUCET_TOKEN:-…}` interpolations, so no deploy has ever been able to override them.
+ *
+ * A check that cannot fail is worse than no check, because the absence of an alarm gets read as the
+ * absence of a problem. Here it is worse than usual in one specific way: `FAUCET_TOKEN` is not only
+ * the operator credential, it is ALSO the input `deriveRequesterSalt` pseudonymises requesters
+ * with when `FAUCET_REQUESTER_SALT` is unset — which it is on both estates. A published token is
+ * therefore a published pseudonymisation key, and every `faucet_requester_grants.requester` value
+ * derived under it is recomputable by anyone who can read the compose file.
+ *
+ * A deny-list of exact strings is structurally unable to work: the next placeholder somebody writes
+ * is, by definition, not on it. `@cloudsforge/secrets` asserts the SHAPE of the value instead,
+ * which is the property a placeholder cannot have. It is imported rather than copied so that this
+ * service cannot drift from the other sixteen.
+ */
 
 type Source = Readonly<Record<string, string | undefined>>
 
@@ -121,30 +140,77 @@ function required(source: Source, name: string): string {
   return value
 }
 
-function requiredSecret(source: Source, name: string, minLength = 24): string {
+/**
+ * Re-wrap the shared guard's `SecretError` as this service's `EnvError`.
+ *
+ * `loadEnv` documents a single error class for every configuration failure, and the boot path
+ * catches that one class. The message is preserved verbatim — it already names the variable and the
+ * command that fixes it, and it never contains the value.
+ */
+function asEnvError<T>(run: () => T): T {
+  try {
+    return run()
+  } catch (err) {
+    if (err instanceof SecretError) throw new EnvError(err.message)
+    throw err
+  }
+}
+
+/**
+ * A secret whose ALPHABET THIS ESTATE DOES NOT CONTROL.
+ *
+ * ── WHY `assertOpaqueSecret` AND NOT `assertGeneratedSecret` ───────────────────────────────────
+ *
+ * `assertGeneratedSecret` is the stricter rule and it is the right one for a key the estate MINTS —
+ * `FAUCET_REQUESTER_SALT` below is exactly that — because the estate chooses those values with
+ * `openssl rand` and can therefore demand the base64 or hex alphabet of them.
+ *
+ * `FAUCET_TOKEN` is not minted by anything. Nothing in `deploy/scripts/estate-bootstrap.sh` issues
+ * it; the compose file classes it with `ANALYTICS_TOKEN` as "a static shared secret … NOT minted by
+ * identity", and `.env.example` tells an operator to type one in. It gates `/metrics` and the
+ * operator read surface, so it is a value a person transcribes — the case `@cloudsforge/secrets`
+ * documents `assertOpaqueSecret` for by name.
+ *
+ * ── IT REFUSES THE LIVE VALUE ANYWAY, WHICH IS THE ENTIRE POINT ────────────────────────────────
+ *
+ * The two rules differ on the alphabet and agree on everything that matters here. Both normalise
+ * punctuation and case away and then refuse a placeholder MARKER anywhere in the value, so
+ * `estate-only-faucet-operator-token-00000` flattens to a string containing `estateonly` and is
+ * refused by either. The choice between them buys the operator a hand-set value that works; it does
+ * not buy the defect a way through.
+ *
+ * **CONSEQUENCE, STATED PLAINLY: this service will not boot on the testnet estate until
+ * `FAUCET_TOKEN` is set to a real value.** That is the fix, not a side effect of it — and because
+ * the requester salt is derived from this value, setting it is also what makes the pseudonymisation
+ * of `faucet_requester_grants` real for the first time.
+ */
+function requiredOpaqueSecret(source: Source, name: string): string {
   const value = required(source, name)
-  if (PLACEHOLDERS.has(value.toLowerCase())) {
-    throw new EnvError(`${name} is set to a known placeholder — generate a real secret`)
-  }
-  // Length is a proxy for entropy and the only one available here. It is set above the point at
-  // which a human-chosen string is plausible, so a memorable password fails this check too.
-  if (value.length < minLength) {
-    throw new EnvError(`${name} must be at least ${minLength} characters (got ${value.length})`)
-  }
+  asEnvError(() => assertOpaqueSecret(name, value))
   return value
 }
 
 /**
- * A secret the deployment MAY provide, held to the same bar as one it must.
+ * A GENERATED key the deployment MAY provide, held to the estate's own rule when it does.
  *
- * Absent is a supported answer; present-but-weak is not. The alternative — accepting whatever is
- * set because the variable is optional — is how a placeholder ends up being the thing that
- * pseudonymises personal data, and it would boot and pass every test.
+ * Absent is a supported answer and stays one — `FAUCET_REQUESTER_SALT` unset means DERIVED from
+ * `FAUCET_TOKEN`, which is a deliberate refusal to ship a constant default, so the empty check sits
+ * ahead of the assertion. Present-but-weak is not supported: accepting whatever is set because the
+ * variable is optional is how a placeholder ends up being the thing that pseudonymises personal
+ * data, and it would boot and pass every test.
+ *
+ * `assertGeneratedSecret` rather than `assertOpaqueSecret`, because this one IS a key the estate
+ * generates and controls the format of. The derived fallback is `createHmac('sha256', …)
+ * .digest('hex')` — 64 hex characters, 32 bytes — so the guard's own floor is exactly what the
+ * derivation already produces, and an explicitly-set salt is now held to the standard its own
+ * default meets. The old floor asked for 32 CHARACTERS, which a 32-character sentence clears while
+ * carrying 24 bytes.
  */
-function optionalSecret(source: Source, name: string, minLength: number): string | undefined {
+function optionalGeneratedSecret(source: Source, name: string): string | undefined {
   const value = source[name]?.trim()
   if (!value) return undefined
-  return requiredSecret(source, name, minLength)
+  asEnvError(() => assertGeneratedSecret(name, value))
+  return value
 }
 
 function optional(source: Source, name: string, fallback: string): string {
@@ -355,8 +421,8 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
   const requesterWindowSeconds = integer(source, 'FAUCET_REQUESTER_WINDOW_SECONDS', 86_400, 1, 31_536_000)
 
   /* ── The requester's privacy budget. See `requester.ts` for the whole argument. ─────────── */
-  const token = requiredSecret(source, 'FAUCET_TOKEN')
-  const requesterSalt = optionalSecret(source, 'FAUCET_REQUESTER_SALT', 32) ?? deriveRequesterSalt(token)
+  const token = requiredOpaqueSecret(source, 'FAUCET_TOKEN')
+  const requesterSalt = optionalGeneratedSecret(source, 'FAUCET_REQUESTER_SALT') ?? deriveRequesterSalt(token)
   // Two days by default — two windows, not thirty. The floor is the window itself and the ceiling
   // is thirty days, which is only reachable by an operator who has also widened the window.
   const requesterRetentionSeconds = integer(
@@ -397,7 +463,42 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
 
     custodyUrl: url(source, 'CUSTODY_URL'),
     custodyDeadlineMs: integer(source, 'CUSTODY_DEADLINE_MS', 10_000, 100, 120_000),
-    custodyToken: requiredSecret(source, 'CUSTODY_TOKEN'),
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════════
+     * **THIS ONE IS DELIBERATELY UNGUARDED, AND THAT IS A DEFECT LEFT OPEN ON PURPOSE — #142/#222.**
+     *
+     * Every other secret this file reads goes through `@cloudsforge/secrets`. This one does not,
+     * and the reason is measured rather than reasoned: `cloudsforge-estate-faucet-1` holds a
+     * 669-CHARACTER JWT in `CUSTODY_TOKEN` (2026-08-05). Both `assertOpaqueSecret` and
+     * `assertServiceCredential` refuse a JWT BY NAME — correctly, because a minted token expires
+     * and this variable is read once at boot — so guarding this variable would crash-loop the
+     * faucet on the estate the day this ships.
+     *
+     * It is a JWT because the deploy intends one. `index.ts:137` is `token: () => env.custodyToken`
+     * handed straight to `HttpClient`, which sets `authorization: Bearer <that value>` verbatim;
+     * there is no `ServiceTokenProvider` in this repository, so custody's gate requires an identity
+     * TOKEN and a `cfsc_…` credential here would 401 every signature request. The compose file
+     * records the same finding at length and calls the ten-minute cliff here "REAL … and worse than
+     * emberkin's", because the call site is the job queue rather than a request path.
+     *
+     * So there are two defects stacked on one variable and they cannot be fixed in this order:
+     *
+     *   1. The compose default is `${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}`,
+     *      which is micro-org #142 exactly, and nothing here refuses it.
+     *   2. The value the bootstrap actually writes is a ten-minute token, which is micro-org #222,
+     *      and it is what makes (1) unfixable from this file.
+     *
+     * Fixing (2) first is the honest order: adopt `ServiceTokenProvider` and read
+     * `FAUCET_IDENTITY_CREDENTIAL`, which `estate-bootstrap.sh` §5b already mints and which is
+     * already sitting in `tokens.env`. On the day that lands, this line becomes
+     * `assertServiceCredential` and (1) closes with it. Until then a guard here would refuse the
+     * only value that works, and a guard that refuses correct input is a guard somebody deletes.
+     *
+     * What it costs meanwhile is bounded and visible rather than silent: the dispense stays
+     * `queued`, the row is retried, and it completes after the next bootstrap.
+     * ═══════════════════════════════════════════════════════════════════════════════════════════
+     */
+    custodyToken: required(source, 'CUSTODY_TOKEN'),
     fundingAddress: address(source, 'FAUCET_FUNDING_ADDRESS'),
     custodyOrderId: required(source, 'FAUCET_CUSTODY_ORDER_ID'),
     custodyUserId: required(source, 'FAUCET_CUSTODY_USER_ID'),

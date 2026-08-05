@@ -7,8 +7,24 @@
  */
 
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { describe, it } from 'node:test'
 import { CHAINS } from '@cloudsforge/contracts-chain'
+
+/**
+ * GENERATED, NOT WRITTEN, AND THE LITERAL IT REPLACES IS WHY.
+ *
+ * Every case in this file used to be built on `'a-real-looking-secret-of-sufficient-length'`. It is
+ * hyphenated, it is a sentence describing itself, and — read the last two words —
+ * `sufficientlength` is one of the placeholder markers `@cloudsforge/secrets` refuses by name. The
+ * whole suite was asserting that a value whose own text says it exists to clear a length check is
+ * an acceptable operator credential, on the service that is also an unauthenticated withdrawal
+ * endpoint pointed at a worthless chain.
+ *
+ * Regenerated per run rather than replaced with a better-looking literal, so a placeholder cannot
+ * creep back in the next time somebody needs a fixture.
+ */
+const TOKEN = randomBytes(48).toString('base64')
 
 /** A source that satisfies every required variable, so a case can vary exactly one thing. */
 function base(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
@@ -16,9 +32,13 @@ function base(overrides: Record<string, string | undefined> = {}): Record<string
     FAUCET_DATABASE_URL: 'postgres://faucet:faucet@db:5432/faucet',
     IDENTITY_JWKS_URL: 'http://identity:4001/.well-known/jwks.json',
     IDENTITY_ISSUER: 'http://identity:4001',
-    FAUCET_TOKEN: 'a-real-looking-secret-of-sufficient-length',
+    FAUCET_TOKEN: TOKEN,
     FAUCET_RPC_URL: 'http://hearth-testnet:8545',
     CUSTODY_URL: 'http://custody:4005',
+    // NOT a generated fixture, deliberately, and not a mistake. `CUSTODY_TOKEN` is the one secret
+    // in this file that is NOT held to a shape — see the block on it in `env.ts`. The estate feeds
+    // it a 669-character JWT because custody's gate requires an identity token and this service has
+    // no `ServiceTokenProvider`, so a shape guard here would refuse the only value that works.
     CUSTODY_TOKEN: 'another-real-looking-secret-of-length',
     FAUCET_FUNDING_ADDRESS: '0x00000000000000000000000000000000000000fa',
     FAUCET_CUSTODY_ORDER_ID: 'faucet:ember:testnet',
@@ -145,8 +165,61 @@ describe('the required variables', () => {
 
   it('refuses a placeholder secret rather than booting with it', () => {
     assert.throws(() => loadEnv(base({ FAUCET_TOKEN: 'change-me' })), EnvError)
-    assert.throws(() => loadEnv(base({ CUSTODY_TOKEN: 'CHANGE_ME' })), EnvError)
     assert.throws(() => loadEnv(base({ FAUCET_TOKEN: 'short' })), EnvError)
+  })
+
+  /**
+   * **THE VALUE THIS SERVICE IS RUNNING ON TODAY, PINNED AS A FAILURE.**
+   *
+   * `deploy/compose/docker-compose.estate.yml` carries
+   * `FAUCET_TOKEN: estate-only-faucet-operator-token-00000` on two lines as a HARDCODED literal,
+   * and the same string was measured inside `cloudsforge-estate-faucet-1` on 2026-08-05. It is 39
+   * characters, so the 24-character floor this service used to apply could never fail for it —
+   * which is micro-org #142, and it is why the floor is gone.
+   *
+   * It is also, because `FAUCET_REQUESTER_SALT` is unset on both estates, the pseudonymisation key
+   * for `faucet_requester_grants.requester`. A published token is a published pseudonymisation key.
+   *
+   * Quoted here because it is an already-public defect value with no secrecy left to protect, and
+   * because a test that names the exact string the estate shipped is the only kind that cannot be
+   * satisfied by a rule that happens to catch something else.
+   */
+  it('REFUSES THE VALUE THE ESTATE IS RUNNING, which is the whole of this change', () => {
+    assert.throws(
+      () => loadEnv(base({ FAUCET_TOKEN: 'estate-only-faucet-operator-token-00000' })),
+      (err: unknown) => {
+        assert.ok(err instanceof EnvError)
+        assert.match(err.message, /FAUCET_TOKEN/)
+        assert.match(err.message, /estateonly/)
+        // The message names the marker it matched, never the value it matched it in: the fatal
+        // handler writes this to stderr and the collector ships it onwards.
+        assert.ok(!err.message.includes('estate-only-faucet-operator-token-00000'))
+        return true
+      },
+    )
+  })
+
+  /**
+   * **CUSTODY_TOKEN IS NOT HELD TO A SHAPE, AND THIS TEST SAYS SO RATHER THAN LETTING IT LOOK LIKE
+   * AN OVERSIGHT.**
+   *
+   * The case above it used to also assert `loadEnv(base({ CUSTODY_TOKEN: 'CHANGE_ME' }))` throws.
+   * That assertion is GONE and its removal is deliberate: the estate feeds this variable a
+   * 669-character JWT (measured, `cloudsforge-estate-faucet-1`, 2026-08-05) because
+   * `index.ts:137` hands the value straight to `HttpClient` as a bearer and custody's gate wants an
+   * identity token, and every shape guard in `@cloudsforge/secrets` refuses a JWT by name. Guarding
+   * this variable would have crash-looped the faucet on the estate.
+   *
+   * So the compose default `${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}` is
+   * still accepted here, and this test pins that fact so nobody reads the gap as a missing line.
+   * The honest fix is micro-org #222 — adopt `ServiceTokenProvider`, read
+   * `FAUCET_IDENTITY_CREDENTIAL`, and only then guard this with `assertServiceCredential`.
+   */
+  it('accepts a JWT in CUSTODY_TOKEN, because the estate supplies one and nothing here can', () => {
+    const jwt = `eyJhbGciOiJSUzI1NiJ9.${randomBytes(64).toString('base64url')}.${randomBytes(64).toString('base64url')}`
+    assert.equal(loadEnv(base({ CUSTODY_TOKEN: jwt })).custodyToken, jwt)
+    // Present but empty is still refused — that is `required`, and it is all that is left here.
+    assert.throws(() => loadEnv(base({ CUSTODY_TOKEN: '   ' })), /CUSTODY_TOKEN/)
   })
 
   it('refuses an RPC or custody URL that is not an absolute http(s) URL', () => {
@@ -327,15 +400,26 @@ describe('the requester salt and its retention period', () => {
    * weaker than `FAUCET_TOKEN` and is never a value anybody can read out of this checkout.
    */
   it('derives the salt from FAUCET_TOKEN when the dedicated variable is unset', () => {
-    const one = loadEnv(base({ FAUCET_TOKEN: 'the-first-operator-token-of-length-x' })).requester.salt
-    const two = loadEnv(base({ FAUCET_TOKEN: 'the-second-operator-token-of-length-x' })).requester.salt
+    // The two tokens were `the-first-operator-token-of-length-x` and its `-second-` twin, whose
+    // names say what they were: two hyphenated strings chosen to be long enough. Generated now, and
+    // the "does not carry its input through" assertion is made against the generated value rather
+    // than against a substring somebody chose to look for.
+    const first = randomBytes(48).toString('base64')
+    const second = randomBytes(48).toString('base64')
+    const one = loadEnv(base({ FAUCET_TOKEN: first })).requester.salt
+    const two = loadEnv(base({ FAUCET_TOKEN: second })).requester.salt
     assert.notEqual(one, two, 'the salt must move when the secret it is derived from moves')
     assert.equal(one.length, 64)
-    assert.ok(!one.includes('operator-token'), 'the derivation must not carry its input through')
+    assert.ok(!one.includes(first), 'the derivation must not carry its input through')
+    // 64 hex characters is 32 BYTES, which is the floor `@cloudsforge/secrets` holds an explicitly
+    // set salt to. The default must not be weaker than the value it is a default for.
+    assert.match(one, /^[0-9a-f]{64}$/)
   })
 
   it('prefers the dedicated variable when it is set, so the two can rotate independently', () => {
-    const dedicated = 'a-dedicated-pseudonymisation-salt-value'
+    // Was `'a-dedicated-pseudonymisation-salt-value'` — 39 hyphenated characters, past the old
+    // 32-character floor and carrying 28 bytes, asserted here as a VALID pseudonymisation key.
+    const dedicated = randomBytes(48).toString('base64')
     const env = loadEnv(base({ FAUCET_REQUESTER_SALT: dedicated }))
     assert.equal(env.requester.salt, dedicated)
     assert.notEqual(env.requester.salt, loadEnv(base()).requester.salt)
@@ -344,16 +428,33 @@ describe('the requester salt and its retention period', () => {
   /**
    * Optional is not the same as unvalidated. A variable that accepts whatever is set because it
    * has a fallback is how a placeholder ends up being the thing that pseudonymises personal data.
+   *
+   * This one is `assertGeneratedSecret` and not `assertOpaqueSecret`, unlike `FAUCET_TOKEN`: the
+   * estate generates this key and controls its alphabet — its own derived default is 64 hex
+   * characters — so the stricter rule is the correct one and costs an operator nothing.
    */
-  it('holds an optional salt to the same bar as a required secret', () => {
+  it('holds an optional salt to the estate’s GENERATED-key rule, not to a keystroke floor', () => {
     assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_SALT: 'changeme' })), /known placeholder/)
-    assert.throws(() => loadEnv(base({ FAUCET_REQUESTER_SALT: 'too-short' })), /at least 32 characters/)
+    // The assertion here used to demand the message say "at least 32 characters" — the keystroke
+    // floor. It is BYTES now, and the message says which: `too-short` is spelled in neither the
+    // base64 nor the hex alphabet, so it fails on the alphabet before it can fail on length.
+    assert.throws(
+      () => loadEnv(base({ FAUCET_REQUESTER_SALT: 'too-short' })),
+      (err: unknown) => err instanceof EnvError && /not base64 or hex/.test(err.message),
+    )
+    // 32 characters of base64 is 24 BYTES. This is the exact shape the old floor waved through: it
+    // counted keystrokes, and keystrokes are not the unit an HMAC key is measured in.
+    assert.throws(
+      () => loadEnv(base({ FAUCET_REQUESTER_SALT: 'K2sN4vQ8xR1wB6tY9zL3mF7hC5jD0pA4' })),
+      (err: unknown) =>
+        err instanceof EnvError && /24 bytes of key material/.test(err.message) && /at least 32/.test(err.message),
+    )
   })
 
   it('never puts the salt anywhere a log line would find it', () => {
     // The salt is one field on one object. It is not in `limits`, not in the boot log's shape, and
     // not spread into anything — so this is the shape assertion that keeps it that way.
-    const env = loadEnv(base({ FAUCET_REQUESTER_SALT: 'a-dedicated-pseudonymisation-salt-value' }))
+    const env = loadEnv(base({ FAUCET_REQUESTER_SALT: randomBytes(48).toString('base64') }))
     assert.deepEqual(Object.keys(env.requester).sort(), ['retentionSeconds', 'salt'])
     assert.ok(!Object.keys(env.limits).includes('salt'))
     assert.ok(!Object.keys(env).some((key) => key.toLowerCase().includes('salt')))

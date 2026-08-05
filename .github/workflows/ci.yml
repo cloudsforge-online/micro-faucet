@@ -28,11 +28,23 @@ jobs:
       # configuration at import — so the container needs the variables it declares, not just a
       # database, or it exits before it serves /livez.
       #
-      # These are CI-only NON-secrets. Two of them deserve a note:
+      # These are CI-only NON-secrets. Three of them deserve a note:
       #
-      #   CUSTODY_TOKEN is a throwaway string that only has to clear a length check. It buys
-      #   nothing: CUSTODY_URL points at a port with nothing on it, and custody is deliberately not
-      #   dialled at boot — a signature is only needed when there is something to sign.
+      #   FAUCET_TOKEN=@generate asks service-ci.yml for a fresh `openssl rand -base64 48` per run,
+      #   thrown away afterwards. It used to read `ci-only-not-a-real-token-0000000000000`, which
+      #   @cloudsforge/secrets now refuses — `ci-only` and `not-a-real` are both placeholder markers,
+      #   and the guard has no CI exemption on purpose (micro-org #142), because an escape hatch is
+      #   reached for in the same hurry that produced the defect. CI does not need a WEAK secret, it
+      #   needs A secret, so it generates a real one per run rather than committing a high-entropy
+      #   literal a future reader could mistake for a key.
+      #
+      #   CUSTODY_TOKEN is left as a plain throwaway string, and that is not an omission. It is the
+      #   one secret this service does NOT hold to a shape: the estate feeds it a 669-character JWT
+      #   because custody's gate wants an identity token and this service has no
+      #   ServiceTokenProvider, and every guard in @cloudsforge/secrets refuses a JWT by name. See
+      #   the block on it in src/env.ts. It buys nothing here either: CUSTODY_URL points at a port
+      #   with nothing on it, and custody is deliberately not dialled at boot — a signature is only
+      #   needed when there is something to sign.
       #
       #   FAUCET_RPC_URL likewise points at nothing, and the smoke test still passes, because a
       #   node that cannot be reached at boot is a WARNING and a soft readiness probe rather than a
@@ -44,7 +56,7 @@ jobs:
       # There is no key here, and there is no variable that would accept one — the funding key is
       # micro-custody's. `src/env.test.ts` proves that by absence.
       smoke-env: |
-        FAUCET_TOKEN=ci-only-not-a-real-token-0000000000000
+        FAUCET_TOKEN=@generate
         IDENTITY_JWKS_URL=http://127.0.0.1:4001/.well-known/jwks.json
         IDENTITY_ISSUER=http://127.0.0.1:4001
         FAUCET_RPC_URL=http://127.0.0.1:8545
