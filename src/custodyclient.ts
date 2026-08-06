@@ -9,10 +9,10 @@
  * ## Why custody rather than a local key, and how the shapes allow it
  *
  * The brief's constraint is real: `SIGNABLE_PURPOSES` is `{deployer, treasury, deposit}`
- * (`custody/src/gates.ts:35`) and `deployer` maps to `creation` only, so custody cannot sign an
+ * (`custody/src/gates.ts`) and `deployer` maps to `creation` only, so custody cannot sign an
  * arbitrary contract call. A faucet drip is not an arbitrary contract call. It is a **native EMBER
  * value transfer with empty calldata**, which is precisely the `transfer` shape that `treasury`
- * maps to (`custody/src/gates.ts:37-41`), and `assertTransfer` (`custody/src/signing.ts:241-266`)
+ * maps to (`custody/src/gates.ts`), and `assertTransfer` (`custody/src/signing.ts`)
  * describes a drip exactly:
  *
  *   * `to` a valid address, and not the zero address                — the recipient
@@ -25,18 +25,18 @@
  * Every one of those is a rule this service was going to have to enforce anyway, enforced instead
  * by the process that holds the key. That is the argument for custody and it is decisive: the
  * alternative is a 32-byte scalar in this container's environment, which is what the frozen service
- * does (`stack/repos/hearth/tools/faucet/src/env.js:41-83`) and which is why that file is three
+ * does (`stack/repos/hearth/tools/faucet/src/env.js`) and which is why that file is three
  * quarters comments about how keys leak.
  *
  * ## The faucet gets its OWN treasury-purpose address, and must not use the pinned one
  *
  * Custody's PINNED treasury for `(ember, testnet)` is settlement's. Signing from it here would put
- * two services on one nonce, and `settlement/src/worker.ts:8-18` exists because that is how a
+ * two services on one nonce, and `settlement/src/worker.ts` exists because that is how a
  * payment gets permanently lost. So an operator mints the faucet a dedicated address with
  * `POST /v1/addresses` — `purpose: 'treasury'`, `chain: 'ember'`, `network: 'testnet'`, and a
  * `userId`/`orderId` of the faucet's own — and configures it. It is a treasury-purpose address that
  * is not THE treasury: `getTreasuryPin` is consulted only for `purpose: 'deposit'`
- * (`custody/src/keys.ts:307`), so the pin is not involved in signing this at all.
+ * (`custody/src/keys.ts`), so the pin is not involved in signing this at all.
  *
  * The residual, said plainly, because SDR-05 says the equivalent about settlement: a holder of this
  * service's custody credential can send this address's whole balance anywhere. That is the exposure
@@ -49,7 +49,7 @@
  *
  * `POST /v1/sign` compares seven identity fields character for character and its 403 deliberately
  * does NOT name the one that disagreed, because that would be an oracle a caller could walk one
- * field at a time (`custody/src/keys.ts:277-283`). So the binding here is configuration that has to
+ * field at a time (`custody/src/keys.ts`). So the binding here is configuration that has to
  * be right by construction, and `env.ts` carries `FAUCET_CUSTODY_ORDER_ID` and
  * `FAUCET_CUSTODY_USER_ID` for exactly that reason rather than deriving something custody would
  * refuse.
@@ -64,7 +64,7 @@ import type { LiveScope } from '@cloudsforge/contracts-auth'
  *
  * `custody:sign:treasury` and nothing else. Not `custody:sign:deposit`, which sweeps INTO the
  * treasury and which this service has no use for — settlement's own client notes that "a deployment
- * that does not sweep should not be issued the second" (`settlement/src/custodyclient.ts:48-52`),
+ * that does not sweep should not be issued the second" (`settlement/src/custodyclient.ts`),
  * and this one does not sweep. Not `custody:treasury:read`: the pin is irrelevant to a
  * treasury-purpose signature and asking for the authority to read it would be asking for authority
  * with no call site.
@@ -77,14 +77,14 @@ import type { LiveScope } from '@cloudsforge/contracts-auth'
  * `micro-market` declared `policy:evaluate` and `micro-wallet` `custody:address` — neither ever
  * a registry key — for the life of both services. `derive-grants.mjs` reads this into
  * `IDENTITY_SERVICE_TOKEN_GRANTS`, and identity validates that list at import and REFUSES TO
- * START on an unknown name (`identity/src/env.ts:141`): a dead identity container, so no tokens
+ * START on an unknown name (`identity/src/env.ts`): a dead identity container, so no tokens
  * for anybody.
  *
  * `LiveScope` rather than `Scope` because `Scope` is `keyof typeof SCOPES` — every registered
  * key, DEPRECATED ones included — and identity will not mint a deprecated scope either.
  * `LiveScope = Exclude<Scope, DeprecatedScope>`, with `DeprecatedScope` computed FROM `SCOPES` by
  * a conditional type over the `deprecated` field rather than hand-listed
- * (`contracts/packages/auth/src/index.ts:507`), so it cannot drift from the registry. `Scope`
+ * (`contracts/packages/auth/src/index.ts`), so it cannot drift from the registry. `Scope`
  * keeps its wide meaning and this does not narrow it: a token arriving from anywhere may carry a
  * scope that has since died, so reading is wide and demanding is narrow. This is demanding.
  */
@@ -116,14 +116,14 @@ export class CustodyUnavailableError extends Error {
  *
  * `value` and `gasPrice` are DECIMAL STRINGS rather than numbers. One EMBER is 1e18 wei, four
  * orders of magnitude past what a double holds exactly, and custody's `quantity` refuses a
- * non-safe-integer number rather than rounding it (`custody/src/signing.ts:74`) — which is the
+ * non-safe-integer number rather than rounding it (`custody/src/signing.ts`) — which is the
  * fail-closed half of this. Sending a `bigint` is not an option either: `JSON.stringify` throws on
  * one, so the conversion has to be deliberate and it happens here, once.
  *
  * `type: 0` is stated rather than left off. Custody infers legacy from the presence of `gasPrice`
  * and would accept the omission, but Ember v1 has no type-2 decoder — a 1559 transaction signed for
  * it is not something the network rejects, it is bytes nothing on that chain can parse
- * (`custody/src/signing.ts:146-150`) — so the one place this service can say so, it says so.
+ * (`custody/src/signing.ts`) — so the one place this service can say so, it says so.
  */
 export interface UnsignedDrip {
   readonly to: string
@@ -174,7 +174,7 @@ export function httpCustodyClient(options: CustodyClientOptions): CustodyClient 
     async sign(input) {
       try {
         // NO IDEMPOTENCY KEY, and its absence is deliberate — settlement makes the same call for
-        // the same reason (`settlement/src/custodyclient.ts:150-155`). `HttpClient` attempts a POST
+        // the same reason (`settlement/src/custodyclient.ts`). `HttpClient` attempts a POST
         // exactly once unless a key is present, which is what is wanted: this service must never be
         // in a position where two sets of bytes exist for one dispense. A signature that was made
         // and whose RESPONSE was lost is discarded UNBROADCAST — nothing was sent, so nothing

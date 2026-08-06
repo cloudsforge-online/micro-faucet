@@ -71,8 +71,8 @@ describe('the testnet gate', () => {
   /**
    * **THE DEFECT IN THE FROZEN SERVICE, NAMED.**
    *
-   * `stack/repos/hearth/tools/faucet/src/env.js:94` defaults `chainId` to 7411, and
-   * `src/index.js:71-75` only checks that the node AGREES with it. So the frozen faucet's
+   * `stack/repos/hearth/tools/faucet/src/env.js` defaults `chainId` to 7411, and
+   * `src/index.js` only checks that the node AGREES with it. So the frozen faucet's
    * out-of-the-box configuration is EMBER mainnet, and pointing it at a mainnet node passes every
    * check it has. That number is the mainnet id in the estate's own pinned package.
    */
@@ -122,7 +122,7 @@ describe('the key', () => {
    *
    * There is no variable that accepts key material, so there is no configuration under which this
    * process holds one. The frozen service reads `HEARTH_FAUCET_PRIVATE_KEY` or
-   * `HEARTH_FAUCET_KEY_FILE` (`src/env.js:42-43`); neither has a successor here.
+   * `HEARTH_FAUCET_KEY_FILE` (`src/env.js`); neither has a successor here.
    */
   it('has no configuration variable that accepts a private key', () => {
     const env = loadEnv(
@@ -206,7 +206,7 @@ describe('the required variables', () => {
    * The case above it used to also assert `loadEnv(base({ CUSTODY_TOKEN: 'CHANGE_ME' }))` throws.
    * That assertion is GONE and its removal is deliberate: the estate feeds this variable a
    * 669-character JWT (measured, `cloudsforge-estate-faucet-1`, 2026-08-05) because
-   * `index.ts:137` hands the value straight to `HttpClient` as a bearer and custody's gate wants an
+   * `index.ts` hands the value straight to `HttpClient` as a bearer and custody's gate wants an
    * identity token, and every shape guard in `@cloudsforge/secrets` refuses a JWT by name. Guarding
    * this variable would have crash-looped the faucet on the estate.
    *

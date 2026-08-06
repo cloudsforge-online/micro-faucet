@@ -182,7 +182,7 @@ describe('the http surface', { skip }, () => {
 
     /**
      * **THE AMOUNT IS A SERVER-SIDE CONSTANT.** Every field a caller might hope influences it is
-     * sent at once, and the payout is unchanged. `server.js:187-188` in the frozen service: "every
+     * sent at once, and the payout is unchanged. `server.js` in the frozen service: "every
      * faucet that has ever been drained let the caller influence the amount".
      */
     it('ignores every attempt to name an amount', async () => {

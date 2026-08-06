@@ -14,13 +14,13 @@
  *
  * The frozen service knows this — `stack/repos/hearth/tools/faucet/.env.example:22-24` says in so
  * many words that "a testnet faucet pointed at mainnet is an unauthenticated withdrawal endpoint" —
- * and then implements the wrong check. `src/index.js:71-75` compares the node's `eth_chainId`
- * against `env.chainId`, which is `num(process.env.HEARTH_CHAIN_ID, 7411)` (`src/env.js:94`). It
+ * and then implements the wrong check. `src/index.js` compares the node's `eth_chainId`
+ * against `env.chainId`, which is `num(process.env.HEARTH_CHAIN_ID, 7411)` (`src/env.js`). It
  * verifies AGREEMENT, not IDENTITY. Set `HEARTH_CHAIN_ID=7411`, point it at a mainnet node, and
  * every check passes — the two agree perfectly.
  *
  * And 7411 is not an arbitrary example. `@cloudsforge/contracts-chain` (`contracts/packages/chain/
- * src/index.ts:57`) records EMBER as `{ mainnet: 7411, testnet: 7412 }`. **7411 is the mainnet id,
+ * src/index.ts`) records EMBER as `{ mainnet: 7411, testnet: 7412 }`. **7411 is the mainnet id,
  * and it is the frozen faucet's DEFAULT** — the value it takes when nobody sets the variable at
  * all. The local Hearth testnet node this was developed against answers `eth_chainId` with `0x1cf4`
  * = 7412, so the frozen faucet's out-of-the-box configuration does not even match the testnet.
@@ -32,7 +32,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * **THERE IS NO KEY VARIABLE HERE EITHER.** The frozen service reads a 32-byte secp256k1 scalar
- * from `HEARTH_FAUCET_PRIVATE_KEY` or a file (`src/env.js:41-83`) and holds it in memory for the
+ * from `HEARTH_FAUCET_PRIVATE_KEY` or a file (`src/env.js`) and holds it in memory for the
  * life of the process. This service holds no key material at all: it sends an unsigned transaction
  * to `micro-custody` and receives bytes. See `custodyclient.ts` for why the shapes allow that.
  *
@@ -82,7 +82,7 @@ export const NETWORK = 'testnet' as const
 /**
  * The EMBER testnet chain id, from the exact-pinned package and from nowhere else.
  *
- * `contracts/packages/chain/src/index.ts:57`. Not restated as a literal here: a second copy of a
+ * `contracts/packages/chain/src/index.ts`. Not restated as a literal here: a second copy of a
  * chain id is a second thing to update, and the update that gets missed is the one that matters.
  */
 export const CHAIN_ID: number = requireEmberChainId(NETWORK)
@@ -245,7 +245,7 @@ function url(source: Source, name: string, fallback?: string): string {
 /**
  * An EMBER amount in whole units, parsed to wei WITHOUT floating point.
  *
- * Carried across from `stack/repos/hearth/tools/faucet/src/env.js:19-25`, which got this right and
+ * Carried across from `stack/repos/hearth/tools/faucet/src/env.js`, which got this right and
  * says why: EMBER has 18 decimals, so `Number('0.1') * 1e18` is 100000000000000000**0.0000000149**
  * and the drip is silently not the drip. The string is split on the point and the fraction is
  * right-padded, so every value this function returns is exact.
@@ -279,7 +279,7 @@ export interface Limits {
   /**
    * The fixed payout, in wei. **Never read from a request**, at any point, by any route.
    *
-   * The frozen service says why at `src/server.js:187-188` and it is the one design decision worth
+   * The frozen service says why at `src/server.js` and it is the one design decision worth
    * copying without change: "every faucet that has ever been drained let the caller influence the
    * amount".
    */
@@ -332,7 +332,7 @@ export interface Env {
   /**
    * The `orderId` half of custody's binding for that address. Custody compares seven identity
    * fields character for character and its 403 deliberately does not say which one disagreed
-   * (`custody/src/keys.ts:277-283`), so this cannot be debugged from a response and has to be
+   * (`custody/src/keys.ts`), so this cannot be debugged from a response and has to be
    * right by construction. It is a variable rather than a derivation because the address is minted
    * by an operator with `POST /v1/addresses`, who chooses it.
    */
@@ -474,7 +474,7 @@ export function loadEnv(source: Source = process.env, host = ''): Env {
      * and this variable is read once at boot — so guarding this variable would crash-loop the
      * faucet on the estate the day this ships.
      *
-     * It is a JWT because the deploy intends one. `index.ts:137` is `token: () => env.custodyToken`
+     * It is a JWT because the deploy intends one. `index.ts` is `token: () => env.custodyToken`
      * handed straight to `HttpClient`, which sets `authorization: Bearer <that value>` verbatim;
      * there is no `ServiceTokenProvider` in this repository, so custody's gate requires an identity
      * TOKEN and a `cfsc_…` credential here would 401 every signature request. The compose file

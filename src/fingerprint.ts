@@ -4,8 +4,8 @@
  * `ledger/src/idempotency.test.ts` states the rule this file exists to obey, and it is stated as a
  * negative because that is the half people get wrong:
  *
- *     a retry with a NEW correlationId fingerprints the same          (idempotency.test.ts:10-11)
- *     a DIFFERENT amount under the same correlationId does not        (idempotency.test.ts:16-17)
+ *     a retry with a NEW correlationId fingerprints the same          (idempotency.test.ts)
+ *     a DIFFERENT amount under the same correlationId does not        (idempotency.test.ts)
  *
  * **A per-attempt field must not be in the fingerprint.** A `correlationId`, a `requestId`, a
  * timestamp and a retry counter are all properties of the ATTEMPT, not of the request, and a

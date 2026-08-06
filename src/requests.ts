@@ -4,19 +4,19 @@
  * **NOTHING HERE SIGNS, READS A NONCE OR TOUCHES THE CHAIN.** A request is parsed, limited,
  * fingerprinted and written down; a worker holding the chain lease does the rest. That split is not
  * tidiness — it is what stops the number of signed transactions from being decided by how many
- * times a client retried. `settlement/src/withdrawals.ts:182-185` draws the same line and gives the
+ * times a client retried. `settlement/src/withdrawals.ts` draws the same line and gives the
  * same reason: "a build here would mean the relay's retry policy decided how many transactions got
  * signed".
  *
  * The frozen service does the opposite. `handleDrip` (`stack/repos/hearth/tools/faucet/
- * src/server.js:174-258`) parses, reserves, reads two balances and BROADCASTS, all inside the
+ * src/server.js`) parses, reserves, reads two balances and BROADCASTS, all inside the
  * request handler, and answers 200 with a transaction hash. Two consequences follow and both are
  * defects rather than trade-offs:
  *
  *   1. A client that times out at four seconds and retries has caused a broadcast it will never
  *      learn about, and its retry passes the cooldown only because `release()` ran on the way out.
  *   2. The response promises `status: 'broadcast — poll eth_getTransactionReceipt'`
- *      (`server.js:252`), which is honest, but it means the service's own record of what happened
+ *      (`server.js`), which is honest, but it means the service's own record of what happened
  *      ends the moment the socket closes. Nothing tracks confirmation, so a transaction dropped
  *      from the mempool is a drip the faucet believes it made.
  *
@@ -98,7 +98,7 @@ export interface Accepted {
  * Take one request and turn it into a `queued` dispense, or refuse it.
  *
  * The order of checks is cheapest-first, which is the frozen service's ordering
- * (`server.js:12-16`) and worth keeping verbatim: parse, then the address rules, then the database.
+ * (`server.js`) and worth keeping verbatim: parse, then the address rules, then the database.
  * Everything an anonymous caller can make this service do is gated behind something it had to pass
  * for free first.
  */
@@ -114,7 +114,7 @@ export async function acceptDrip(deps: AcceptDeps, input: AcceptInput): Promise<
 
   /* ── 2. Never the faucet's own address. ────────────────────────────────────────────────────
    *
-   * Kept from `server.js:192-194`. Not a nicety: the drip would succeed, cost the gas, and appear
+   * Kept from `server.js`. Not a nicety: the drip would succeed, cost the gas, and appear
    * in the ledger as a payout that funded nobody — and it would consume a cooldown slot and a
    * budget slot for an address that can never be over its balance ceiling, so a script pointed at
    * it drains the budget for ever at one drip per cooldown.
@@ -125,7 +125,7 @@ export async function acceptDrip(deps: AcceptDeps, input: AcceptInput): Promise<
 
   /* ── 3. THE AMOUNT IS A SERVER-SIDE CONSTANT. ──────────────────────────────────────────────
    *
-   * `input` has no amount field and there is nowhere for one to arrive. `server.js:187-188` says
+   * `input` has no amount field and there is nowhere for one to arrive. `server.js` says
    * why and it is the single most important sentence in the frozen repository: "every faucet that
    * has ever been drained let the caller influence the amount".
    */

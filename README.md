@@ -26,8 +26,8 @@ It is also **an abuse target that signs transactions**, and everything below fol
 
 ## The inherited claim, checked
 
-`docs/ecosystem/02-target-architecture.md:436` says the faucet is "built and tested and **not
-deployed**", and `docs/ecosystem/00-current-state.md:312` puts a number on it: "Built, undeployed —
+`docs/ecosystem/02-target-architecture.md` says the faucet is "built and tested and **not
+deployed**", and `docs/ecosystem/00-current-state.md` puts a number on it: "Built, undeployed —
 `hearth/tools/faucet`, 66 checks, not in compose."
 
 **Both are true.** The source is fourteen files in `stack/repos/hearth/tools/faucet`, and
@@ -45,10 +45,10 @@ Two corrections to the record:
   `02-target-architecture.md`. The claim is real; the citation was not.
 
 * **The frozen faucet's default chain id is EMBER MAINNET.**
-  `stack/repos/hearth/tools/faucet/src/env.js:94` reads
+  `stack/repos/hearth/tools/faucet/src/env.js` reads
   `chainId: num(process.env.HEARTH_CHAIN_ID, 7411)`, and `.env.example:25` ships `HEARTH_CHAIN_ID=7411`.
-  `@cloudsforge/contracts-chain` (`contracts/packages/chain/src/index.ts:57`) pins EMBER at
-  `{ mainnet: 7411, testnet: 7412 }`. The boot check at `src/index.js:71-75` compares the node's
+  `@cloudsforge/contracts-chain` (`contracts/packages/chain/src/index.ts`) pins EMBER at
+  `{ mainnet: 7411, testnet: 7412 }`. The boot check at `src/index.js` compares the node's
   `eth_chainId` against that configured value, so it verifies **agreement, not identity** — point it
   at a mainnet node and every check passes, because the two agree perfectly. The local Hearth testnet
   node answers `eth_chainId` with `0x1cf4` = 7412, so the shipped configuration does not even match
@@ -62,30 +62,30 @@ Two corrections to the record:
 
 | Here | From | Why it survived |
 |---|---|---|
-| `src/address.ts` | `src/address.js:14-48` | The EIP-55 rule is exactly right: a mixed-case address is claiming a checksum and is held to it; an all-one-case address is not claiming one and is accepted. The `ember1…` refusal is kept verbatim, wording included. |
+| `src/address.ts` | `src/address.js` | The EIP-55 rule is exactly right: a mixed-case address is claiming a checksum and is held to it; an all-one-case address is not claiming one and is accepted. The `ember1…` refusal is kept verbatim, wording included. |
 | `src/rpc.ts` | `src/rpc.js` | Strict hex QUANTITY in both directions, and the two error messages that name the UTXO-era REST API — the most common misconfiguration, reconfirmed against the running node. |
-| `src/env.ts` (`emberToWei`) | `src/env.js:19-25` | 18-decimal parsing without floating point, split on the point and right-padded. |
-| The refusal ordering | `src/server.js:12-16` | Cheapest-first: parse, then the free local rules, then anything that costs a round trip. |
-| The four-layer limit argument | `src/limits.js:5-18` | "The global cap is the one that means anything. The other three exist so that an honest user is never the one who trips it." Correct, and kept. |
-| The fixed drip | `src/server.js:187-188` | "Every faucet that has ever been drained let the caller influence the amount." |
-| "Rate limited, not dry" | `src/limits.js:115-117` | Telling an operator "dry" when the balance is fine costs them an hour. |
-| Boot leniency for an absent node | `src/index.js:88-94` | Fatal only on a chain-id mismatch. See "The chain check" below — the frozen service is right on this specific point, for a reason worth writing down. |
+| `src/env.ts` (`emberToWei`) | `src/env.js` | 18-decimal parsing without floating point, split on the point and right-padded. |
+| The refusal ordering | `src/server.js` | Cheapest-first: parse, then the free local rules, then anything that costs a round trip. |
+| The four-layer limit argument | `src/limits.js` | "The global cap is the one that means anything. The other three exist so that an honest user is never the one who trips it." Correct, and kept. |
+| The fixed drip | `src/server.js` | "Every faucet that has ever been drained let the caller influence the amount." |
+| "Rate limited, not dry" | `src/limits.js` | Telling an operator "dry" when the balance is fine costs them an hour. |
+| Boot leniency for an absent node | `src/index.js` | Fatal only on a chain-id mismatch. See "The chain check" below — the frozen service is right on this specific point, for a reason worth writing down. |
 
 **Rewritten, with the defect each rewrite closes.**
 
 | Here | Replaces | The defect |
 |---|---|---|
-| `faucet_address_grants`, `faucet_requester_grants`, `faucet_budget` (`src/migrations.ts`, `src/limits.ts`) | `src/limits.js:55-59`, three `Map`s and an array | **An in-memory limiter is per-replica and is therefore not a limiter.** The frozen file's own atomicity argument (`limits.js:20-25`) is sound — and about one process. Two replicas double every limit including the daily cap; ten make it tenfold. The JSON-file persistence (`limits.js:182-195`) makes it worse, not better: N replicas on one volume whole-file-overwrite each other's view. |
-| The chain-keyed lease (`src/jobs.ts`, `src/dispense.ts`) | `Sender._serialise`, `src/sender.js:56-62` | A module-scope promise chain the second replica cannot see. `settlement/src/worker.ts:8-18` is the same class of bug: **the contended resource is the funding address's nonce, not the dispense row.** |
-| `queued → signing → signed → broadcast → confirmed` with the bytes committed before the broadcast | `handleDrip`, `src/server.js:174-258` | The frozen service broadcasts inside the request handler and answers 200 with a hash. A client that times out and retries has caused a broadcast it will never learn about; and nothing tracks confirmation, so a transaction dropped from the mempool is a drip the faucet believes it made. |
-| Custody holds the key (`src/custodyclient.ts`) | `src/env.js:41-83` | A 32-byte scalar in the process environment, which is why that file is three quarters comments about how keys leak. |
-| The testnet gate (`src/env.ts`) | `src/env.js:94`, `src/index.js:71-75` | See above: agreement, not identity, defaulting to mainnet. |
-| `/livez`, `/readyz`, `/metrics` | `GET /health`, `src/server.js:130-151` | One route for three questions, answering 503 when the faucet is dry — so an empty faucet is pulled out of the balancer and the page that would have said "the faucet is out of EMBER" is unreachable. |
+| `faucet_address_grants`, `faucet_requester_grants`, `faucet_budget` (`src/migrations.ts`, `src/limits.ts`) | `src/limits.js`, three `Map`s and an array | **An in-memory limiter is per-replica and is therefore not a limiter.** The frozen file's own atomicity argument (`limits.js`) is sound — and about one process. Two replicas double every limit including the daily cap; ten make it tenfold. The JSON-file persistence (`limits.js`) makes it worse, not better: N replicas on one volume whole-file-overwrite each other's view. |
+| The chain-keyed lease (`src/jobs.ts`, `src/dispense.ts`) | `Sender._serialise`, `src/sender.js` | A module-scope promise chain the second replica cannot see. `settlement/src/worker.ts` is the same class of bug: **the contended resource is the funding address's nonce, not the dispense row.** |
+| `queued → signing → signed → broadcast → confirmed` with the bytes committed before the broadcast | `handleDrip`, `src/server.js` | The frozen service broadcasts inside the request handler and answers 200 with a hash. A client that times out and retries has caused a broadcast it will never learn about; and nothing tracks confirmation, so a transaction dropped from the mempool is a drip the faucet believes it made. |
+| Custody holds the key (`src/custodyclient.ts`) | `src/env.js` | A 32-byte scalar in the process environment, which is why that file is three quarters comments about how keys leak. |
+| The testnet gate (`src/env.ts`) | `src/env.js`, `src/index.js` | See above: agreement, not identity, defaulting to mainnet. |
+| `/livez`, `/readyz`, `/metrics` | `GET /health`, `src/server.js` | One route for three questions, answering 503 when the faucet is dry — so an empty faucet is pulled out of the balancer and the page that would have said "the faucet is out of EMBER" is unreachable. |
 | `src/migrator.ts`, a one-shot job | *(nothing — the frozen service has no database)* | |
 
 `src/keccak.ts` is carried across from `settlement/src/keccak.ts` unchanged, so two services deriving
 the same address cannot disagree. The frozen module reached into the node's source tree with
-`require('../../../node/src/crypto/keccak')` (`address.js:11`), which is why its Dockerfile has to
+`require('../../../node/src/crypto/keccak')` (`address.js`), which is why its Dockerfile has to
 build from the whole Hearth repository root and hand-copy six paths out of it — and why the service
 was never deployable on its own.
 
@@ -99,10 +99,10 @@ any.** `src/env.test.ts` proves that by absence: it loads an environment carryin
 reaches the loaded config.
 
 The brief's constraint is real: `SIGNABLE_PURPOSES` is `{deployer, treasury, deposit}`
-(`custody/src/gates.ts:35`) and `deployer` maps to `creation` only, so custody cannot sign an
+(`custody/src/gates.ts`) and `deployer` maps to `creation` only, so custody cannot sign an
 arbitrary contract call. **A faucet drip is not an arbitrary contract call.** It is a native EMBER
 value transfer with empty calldata — precisely the `transfer` shape `treasury` maps to
-(`custody/src/gates.ts:37-41`), whose policy `assertTransfer` (`custody/src/signing.ts:241-266`)
+(`custody/src/gates.ts`), whose policy `assertTransfer` (`custody/src/signing.ts`)
 describes a drip exactly:
 
 | `assertTransfer` requires | A drip |
@@ -122,7 +122,7 @@ pinned treasury for `(ember, testnet)` is settlement's; signing from it here wou
 on one nonce, which is the exact bug `settlement/src/worker.ts` exists to fix. An operator mints the
 faucet a dedicated address with `POST /v1/addresses` and its own `userId`/`orderId` — see
 `.env.example`. `getTreasuryPin` is consulted only for `purpose: 'deposit'`
-(`custody/src/keys.ts:307`), so the pin is not involved in signing this at all.
+(`custody/src/keys.ts`), so the pin is not involved in signing this at all.
 
 **The residual, said plainly.** A holder of this service's custody credential can send this address's
 whole balance anywhere. That is what a `treasury` signer can do by construction — `SDR-05` says the
@@ -194,12 +194,12 @@ estate says there is no mainnet faucet and links to the testnet one.
 ### The chain check, and why an absent node is *not* fatal
 
 A node that **disagrees** is fatal. A node that **cannot be reached** is a warning and a soft
-readiness probe, which is the frozen service's own asymmetry (`src/index.js:88-94`) and is right
+readiness probe, which is the frozen service's own asymmetry (`src/index.js`) and is right
 here for a reason worth stating, because the opposite is the tempting call:
 
 > An unreachable node cannot cause a wrong-chain signature, because **the chain id in a signature
 > never comes from the node.** It comes from the pinned package, and custody resolves it a third
-> time from the address's own row and refuses a mismatch (`custody/src/keys.ts:298-300`). Pointed at
+> time from the address's own row and refuses a mismatch (`custody/src/keys.ts`). Pointed at
 > a mainnet node, this service would sign a 7412 transaction, that node would reject it under
 > EIP-155, and nothing would move.
 
@@ -212,7 +212,7 @@ accept requests during a node restart, and accepting is the one thing it can sti
 
 **157, zero skipped.** `pnpm test`, against a real Postgres.
 
-No proof here needs a Hearth node. `indexer/src/hearth.test.ts:59` skips when none is reachable,
+No proof here needs a Hearth node. `indexer/src/hearth.test.ts` skips when none is reachable,
 which is honest and also means those cases prove nothing on a machine without one. Every case here
 runs against a real Postgres and two fakes — and the fake node does the one thing a real one will not
 do on demand: **accept a transaction and lose the response.**

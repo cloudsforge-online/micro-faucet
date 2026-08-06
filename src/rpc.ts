@@ -18,9 +18,9 @@
  *     node dribbling one byte a second holds a faucet request open indefinitely.
  *   * **EVERY QUANTITY IS A `bigint`.** `chainId` and `nonce` are the two that must become numbers
  *     — custody's `signEvm` refuses a non-safe-integer rather than rounding it
- *     (`custody/src/signing.ts:74`) — and both are range-checked at the boundary here rather than
+ *     (`custody/src/signing.ts`) — and both are range-checked at the boundary here rather than
  *     coerced at the call site. The frozen `chainId()` does a bare `Number(toBig(…))`
- *     (`rpc.js:99`), which is fine for a chain id and would not be fine for anything else.
+ *     (`rpc.js`), which is fine for a chain id and would not be fine for anything else.
  *   * `eth_sendRawTransaction` distinguishes "the node already has this" from every other failure.
  *     That distinction does not exist in the frozen client and it is what makes the retry path in
  *     `dispense.ts` safe — see `AlreadyKnownError`.
@@ -140,7 +140,7 @@ export class Rpc {
       throw new RpcError(code, message)
     }
     if (!('result' in envelope)) {
-      // Carried from the frozen client (`rpc.js:74-88`), whose diagnosis is exactly right and was
+      // Carried from the frozen client (`rpc.js`), whose diagnosis is exactly right and was
       // reconfirmed against the running node: Hearth's UTXO-era REST API answers an unknown POST
       // with `{"err":…}` at HTTP 200, which parses as JSON and would otherwise surface four frames
       // later as "cannot convert undefined to BigInt".
@@ -233,7 +233,7 @@ export function quantity(value: unknown, what: string): bigint {
  * A quantity that must fit in a JS integer: a chain id or a nonce, and nothing else.
  *
  * Range-checked rather than coerced. Custody refuses a non-safe-integer nonce rather than rounding
- * it (`custody/src/signing.ts:74`), so a nonce past 2^53 must fail HERE, loudly, rather than
+ * it (`custody/src/signing.ts`), so a nonce past 2^53 must fail HERE, loudly, rather than
  * arriving there as a rounded number that signs a transaction nobody asked for.
  */
 export function smallInteger(value: unknown, what: string): number {

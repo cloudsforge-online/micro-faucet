@@ -111,7 +111,7 @@ describe('dispensing', { skip }, () => {
       await driveChain(deps)
 
       const payload = custody.signatures[0]!
-      // Every one of these is a rule in `custody/src/signing.ts:241-266`. A mismatch is a 403 that
+      // Every one of these is a rule in `custody/src/signing.ts`. A mismatch is a 403 that
       // does not say which field was wrong, so getting them right by construction is the only way.
       assert.equal(payload.to, ALICE)
       assert.equal(payload.data, '0x', 'calldata must be empty — with it, this is a contract call')

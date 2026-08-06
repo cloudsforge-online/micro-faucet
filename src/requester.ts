@@ -21,7 +21,7 @@
  * ### 1. TRUNCATE, before anything else touches the value
  *
  * `truncateIp` from `@cloudsforge/contracts-auth` — the SAME function `identity` truncates with at
- * `identity/src/sessions.ts:159`, so the estate has one definition of "a network prefix" and not
+ * `identity/src/sessions.ts`, so the estate has one definition of "a network prefix" and not
  * two. IPv4 → a /24, IPv6 → a /48, and an IPv4-mapped IPv6 address → the /24 of the address inside
  * it rather than a /48 that would have kept all thirty-two IPv4 bits.
  *

@@ -5,14 +5,14 @@
  *
  * Not a convenience: `resetFaucet` truncates every table this service owns, and requiring "test" in
  * the name is the difference between a red build and an emptied environment. The mechanism is
- * `beacon/src/testsupport.ts:27-36` exactly — the same variable shape, the same `/test/i` guard on
+ * `beacon/src/testsupport.ts` exactly — the same variable shape, the same `/test/i` guard on
  * the URL, the same `enabled`/`skip` pair — because CI keys off it: the reusable workflow exports
  * `FAUCET_TEST_DATABASE_URL` and **fails the build if the database suite skipped**, so a harness
  * that spelled the variable differently would produce a green build that proved nothing.
  *
  * ## Why the proofs do not need a Hearth node
  *
- * `indexer/src/hearth.test.ts:59` skips when no node is reachable, which is honest and which also
+ * `indexer/src/hearth.test.ts` skips when no node is reachable, which is honest and which also
  * means that on a machine without one those cases prove nothing. Every proof in this repository —
  * the two-worker race, the concurrent-request race, exactly-once on a lost broadcast, the testnet
  * refusal — runs against `fakeNode` and `fakeCustody` below and a REAL Postgres. The database is

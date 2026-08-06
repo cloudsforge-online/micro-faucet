@@ -17,13 +17,13 @@
  *
  * The asymmetry is the frozen service's — "a node that is down at boot is a normal thing on a
  * testnet ... the faucet recovers on its own", and fatal only for a chain-id mismatch
- * (`stack/repos/hearth/tools/faucet/src/index.js:88-94`) — and on this specific point it is right,
+ * (`stack/repos/hearth/tools/faucet/src/index.js`) — and on this specific point it is right,
  * for a reason worth writing down because the opposite is the tempting call:
  *
  *   **An unreachable node cannot cause a wrong-chain signature, because the chain id in a
  *   signature never comes from the node.** It comes from the pinned package, and custody then
  *   resolves it a THIRD time from the address's own row and refuses a mismatch
- *   (`custody/src/keys.ts:298-300`, `custody/src/signing.ts:171`). If this service were pointed at
+ *   (`custody/src/keys.ts`, `custody/src/signing.ts`). If this service were pointed at
  *   a mainnet node tomorrow it would sign a 7412 transaction, that node would reject it under
  *   EIP-155, and nothing would move.
  *

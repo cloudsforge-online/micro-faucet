@@ -1,7 +1,7 @@
 /**
  * Addresses, and the one typo protection a 20-byte EVM address has.
  *
- * Ported from `stack/repos/hearth/tools/faucet/src/address.js:14-48`, whose rule is right and is
+ * Ported from `stack/repos/hearth/tools/faucet/src/address.js`, whose rule is right and is
  * kept verbatim in substance: a MIXED-CASE address is claiming an EIP-55 checksum and is held to
  * it; an all-one-case address is not claiming one and is accepted. Rejecting all-lowercase would
  * refuse the output of half the tooling in the ecosystem, and accepting a failed mixed-case
@@ -11,7 +11,7 @@
  *
  *   1. **The keccak comes from this repository, not from a relative path into a sibling.** The
  *      frozen module reaches out with `require('../../../node/src/crypto/keccak')`
- *      (`address.js:11`), which is what made the faucet un-deployable as a service: its Dockerfile
+ *      (`address.js`), which is what made the faucet un-deployable as a service: its Dockerfile
  *      has to build from the whole Hearth repository root and hand-copy six paths out of the node's
  *      source tree (`stack/repos/hearth/tools/faucet/Dockerfile:12-18`). `keccak.ts` here is
  *      settlement's, carried across for the reason its own header gives.
@@ -58,7 +58,7 @@ export function toChecksumAddress(address: string): string {
  *
  * Pure, and the first thing `POST /v1/drips` does, because it is free and it rejects most abuse
  * before anything costs a database round trip — the cheapest-first ordering the frozen service
- * documents at `src/server.js:12-16` and which is worth keeping.
+ * documents at `src/server.js` and which is worth keeping.
  */
 export function parseRecipient(raw: unknown): string {
   if (typeof raw !== 'string') throw new AddressError('address must be a string')

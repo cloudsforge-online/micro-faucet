@@ -13,15 +13,15 @@
  *     chain.dispense   ember:testnet   The contended resource is the funding address's NONCE.
  *                                      Keying on the dispense row would let two different
  *                                      dispenses sign against one nonce, which is
- *                                      settlement/src/worker.ts:8-18 exactly.
+ *                                      settlement/src/worker.ts exactly.
  *     retention        global          One prune, however many replicas.
  *
  * `@cloudsforge/jobs` claims with `for update skip locked`, so of N workers polling for
  * `chain.dispense / ember:testnet` exactly one gets it and the rest skip rather than wait.
  *
  * The frozen service has no queue and no lease. Its serialisation is `Sender._serialise`
- * (`stack/repos/hearth/tools/faucet/src/sender.js:56-62`), a module-scope promise chain, and its
- * only timer is the limiter's debounced state flush (`limits.js:188`). Both are per-process, so
+ * (`stack/repos/hearth/tools/faucet/src/sender.js`), a module-scope promise chain, and its
+ * only timer is the limiter's debounced state flush (`limits.js`). Both are per-process, so
  * both are invisible to a second replica.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *

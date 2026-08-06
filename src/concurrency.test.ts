@@ -8,11 +8,11 @@
  * ## The dispensing race
  *
  * The frozen faucet serialises sends with `Sender._serialise` — one promise chain in one process
- * (`stack/repos/hearth/tools/faucet/src/sender.js:56-62`). Its header is exactly right about the
+ * (`stack/repos/hearth/tools/faucet/src/sender.js`). Its header is exactly right about the
  * problem: "ask it twice before the first transaction reaches the mempool and it answers the same
  * number twice; the second transaction then replaces the first instead of following it, and one of
  * the two users never gets paid". Its answer is a module-scope variable, which the second replica
- * cannot see. `settlement/src/worker.ts:8-18` records the same class of bug found in production
+ * cannot see. `settlement/src/worker.ts` records the same class of bug found in production
  * shape: **the contended resource is the chain's nonce, not the row.**
  *
  * There are two defences here and this file tests them SEPARATELY, because they fail separately:

@@ -101,7 +101,7 @@ describe('the limits are the database', { skip }, () => {
      * ten separate connections. Exactly one may win.
      *
      * This is the case the frozen limiter's `Map` cannot survive across replicas: its own atomicity
-     * argument (`limits.js:20-25`) is sound and is about ONE process, and ten connections here
+     * argument (`limits.js`) is sound and is about ONE process, and ten connections here
      * stand in for ten of them.
      */
     it('ten concurrent requests for one address grant exactly one', async () => {
@@ -176,7 +176,7 @@ describe('the limits are the database', { skip }, () => {
       if (sixth.ok) return
       assert.equal(sixth.code, 'budget_exhausted')
       // The wording is load-bearing: telling an operator "dry" when the balance is fine costs an
-      // hour. The frozen service draws the same distinction (`limits.js:115-117`).
+      // hour. The frozen service draws the same distinction (`limits.js`).
       assert.match(sixth.message, /rate limited, not empty/)
     })
 

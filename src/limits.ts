@@ -6,8 +6,8 @@
  * THEREFORE NOT A LIMITER.**
  *
  * The frozen service's limiter is three JavaScript `Map`s and an array
- * (`stack/repos/hearth/tools/faucet/src/limits.js:55-59`), and its own header makes a careful,
- * correct argument for why that is safe (`limits.js:20-25`): `reserve()` performs every check AND
+ * (`stack/repos/hearth/tools/faucet/src/limits.js`), and its own header makes a careful,
+ * correct argument for why that is safe (`limits.js`): `reserve()` performs every check AND
  * records the spend in one synchronous block with no `await` inside it, so on Node's single thread
  * two simultaneous requests for the same address cannot both pass. That argument is true. It is
  * also true of exactly one process. Behind a balancer with two replicas every limit is doubled;
@@ -16,7 +16,7 @@
  * the other replica is not inside the process.
  *
  * The persistence does not save it either. State is a JSON file flushed on a debounced
- * `setTimeout` (`limits.js:182-195`), so N replicas on one volume overwrite each other's view of
+ * `setTimeout` (`limits.js`), so N replicas on one volume overwrite each other's view of
  * the limits, and each write is a whole-file replacement of a state another process has since
  * changed. Two replicas sharing that file is worse than two replicas not sharing it.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -33,7 +33,7 @@
  *                 faucet pays out at most `cap_wei` per rolling window and then refuses everyone.
  *
  * The budget is the one that means anything. The other three exist so that an honest user is never
- * the one who trips it. That framing is the frozen service's (`limits.js:5-18`) and it is right;
+ * the one who trips it. That framing is the frozen service's (`limits.js`) and it is right;
  * what is different here is only where the counters live.
  *
  * ## How a reservation is atomic without a lock
@@ -262,7 +262,7 @@ async function attempt(
     return {
       ok: false,
       code: 'budget_exhausted',
-      // The wording matters and it is the frozen service's point (`limits.js:115-117`): the faucet
+      // The wording matters and it is the frozen service's point (`limits.js`): the faucet
       // is NOT dry. Its balance may be perfect. It is rate limited in aggregate, which is a
       // different condition with a different fix, and telling an operator "dry" costs them an hour.
       message: 'the faucet has reached its payout cap for this window; it is rate limited, not empty',
@@ -280,7 +280,7 @@ async function attempt(
  * that would not take the transaction, an exhausted retry on an unsigned row. It is deliberately
  * NOT called for a transaction that was broadcast and then did not confirm: those bytes may yet be
  * mined, and the EMBER is genuinely gone. The frozen service draws the same line for the same
- * reason (`limits.js:27-30`) and it is the right one.
+ * reason (`limits.js`) and it is the right one.
  *
  * The address grant is DELETED rather than rewound, which restores the pre-request state exactly:
  * `grants` was incremented and `last_granted_at` moved, and there is nowhere to move it back to.

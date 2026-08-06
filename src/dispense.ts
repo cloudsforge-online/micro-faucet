@@ -5,7 +5,7 @@
  * **THIS WHOLE FILE RUNS UNDER A LEASE KEYED ON THE CHAIN, NOT ON THE DISPENSE ROW, AND THAT IS
  * WHERE THE CORRECTNESS LIVES.**
  *
- * `settlement/src/worker.ts:4-18` states the defect and it is the same class of bug here, so the
+ * `settlement/src/worker.ts` states the defect and it is the same class of bug here, so the
  * fix is the same shape. A per-row guard is not wrong, it is insufficient: two DIFFERENT dispenses,
  * each with its own row, each passing its own perfectly correct conditional update, both read
  * `eth_getTransactionCount` and both get the same answer. Both are signed against one nonce. At
@@ -20,7 +20,7 @@
  * workers.
  *
  * The frozen service's answer to this is `Sender._serialise` (`stack/repos/hearth/tools/faucet/
- * src/sender.js:56-62`), one promise chain in one process. Its header is exactly right about the
+ * src/sender.js`), one promise chain in one process. Its header is exactly right about the
  * problem — "ask it twice before the first transaction reaches the mempool and it answers the same
  * number twice; the second transaction then replaces the first instead of following it, and one of
  * the two users never gets paid" — and its solution is a module-scope variable, which the second
@@ -67,7 +67,7 @@ import {
  * Fixed rather than estimated, and that is correctness rather than a saving. A transfer with empty
  * calldata to an account with no code costs exactly 21,000 gas — there is no case in which it costs
  * more, so an estimate can only introduce a number that is wrong. Custody's `assertTransfer`
- * requires `[21_000, 200_000]` (`custody/src/signing.ts:262-265`), which this sits at the floor of.
+ * requires `[21_000, 200_000]` (`custody/src/signing.ts`), which this sits at the floor of.
  */
 export const TRANSFER_GAS = 21_000
 
@@ -229,13 +229,13 @@ async function start(deps: DispenseDeps, row: DispenseRow): Promise<StartOutcome
       // THE CHECKSUMMED FORM, not the lower-cased one the column stores.
       //
       // Functionally either would pass: custody's transfer shape only requires
-      // `ethers.isAddress(to)` (`custody/src/signing.ts:243`), which accepts all-lowercase, and
+      // `ethers.isAddress(to)` (`custody/src/signing.ts`), which accepts all-lowercase, and
       // EIP-55 is a display checksum rather than part of the address. It is sent checksummed
       // because the estate's convention at the custody boundary is the canonical form —
       // settlement passes an address it has put through `canonicaliseEvm` — and because custody's
       // SWEEP shape compares `to` against its pin CHARACTER FOR CHARACTER, with a refusal whose
       // message exists specifically for an address that differs only in case
-      // (`custody/src/signing.ts:299-302`). A service that sent a different spelling from every
+      // (`custody/src/signing.ts`). A service that sent a different spelling from every
       // other caller would be the one that discovered that the day a shape gained a comparison.
       to: toChecksumAddress(row.recipient),
       // A decimal string, never a number: 1e18 wei does not fit a double, and custody refuses a

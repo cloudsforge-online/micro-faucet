@@ -5,7 +5,7 @@
  * nobody can recover it from.
  *
  * The keccak checks are the ones settlement's own header argues for
- * (`settlement/src/keccak.ts:16-25`) and the second is the strong one: the permutation is compared
+ * (`settlement/src/keccak.ts`) and the second is the strong one: the permutation is compared
  * against **Node's own SHA3-256** over inputs of every length around the 136-byte rate boundary.
  * `sha3_256` is this exact sponge with the NIST padding byte, so if the permutation, the rate, the
  * lane packing or the absorb loop were wrong in any way it would disagree with OpenSSL. That leaves

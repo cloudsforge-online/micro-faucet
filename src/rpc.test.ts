@@ -2,7 +2,7 @@
  * The JSON-RPC client, over a real socket.
  *
  * No database and no Hearth node: a stub HTTP server answers, so every case here — including the
- * ones a real node would only produce on a bad day — runs anywhere. `indexer/src/hearth.test.ts:59`
+ * ones a real node would only produce on a bad day — runs anywhere. `indexer/src/hearth.test.ts`
  * skips when no node is reachable, which is honest and also means those cases prove nothing on a
  * machine without one. Nothing in this file skips.
  *
@@ -70,7 +70,7 @@ describe('the node client', () => {
 
     /**
      * Custody refuses a non-safe-integer nonce rather than rounding it
-     * (`custody/src/signing.ts:74`), so a nonce past 2^53 must fail HERE, loudly, rather than
+     * (`custody/src/signing.ts`), so a nonce past 2^53 must fail HERE, loudly, rather than
      * arriving there as a rounded number that signs a transaction nobody asked for.
      */
     it('refuses a small-integer quantity that is not actually small', () => {
@@ -133,7 +133,7 @@ describe('the node client', () => {
 
     /**
      * **THE MISCONFIGURATION THAT COSTS AN AFTERNOON**, carried across from the frozen client
-     * (`rpc.js:74-88`) and reconfirmed against the running node: a POST to 127.0.0.1:8647 answers
+     * (`rpc.js`) and reconfirmed against the running node: a POST to 127.0.0.1:8647 answers
      * `{"err":"this is the REST API — the Ethereum JSON-RPC endpoint is a different port"}` at HTTP
      * 200. That parses as JSON, so without this check the symptom is "cannot convert undefined to
      * BigInt" four frames from the cause.

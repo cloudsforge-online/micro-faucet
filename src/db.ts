@@ -6,7 +6,7 @@
  * not care which driver it is handed. It has no `begin`, so it cannot express a transaction, and
  * the reservation in `limits.ts` is only atomic BECAUSE it runs inside one.
  *
- * So the domain modules take `postgres`'s own types, exactly as `settlement/src/outbox.ts:21-27`
+ * So the domain modules take `postgres`'s own types, exactly as `settlement/src/outbox.ts`
  * does and for the same reason. `Db` is structurally a superset of `@cloudsforge/db`'s `Sql`, so
  * the same pool satisfies `migrate` and `assertSchemaAtLeast` with the cast `index.ts` already
  * makes.

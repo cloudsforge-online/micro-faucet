@@ -28,7 +28,7 @@
  *                     stop, not that acceptance is unsafe. A dispense that cannot be signed waits
  *                     in `queued`, which is exactly where an unsignable dispense belongs.
  *
- * The frozen service has one route for all three (`GET /health`, `server.js:130-151`) and answers
+ * The frozen service has one route for all three (`GET /health`, `server.js`) and answers
  * 503 when the faucet is dry — so an empty faucet is pulled out of the balancer and the page that
  * would have told a user "the faucet is out of EMBER" is unreachable. Dryness is a soft probe here
  * and a field on the body.
@@ -374,7 +374,7 @@ function buildRoutes(): Route[] {
      *
      * 202, not 200. The request is QUEUED — nothing has been signed and no nonce has been read —
      * and the caller polls `GET /v1/drips/:id`. The frozen service broadcasts inside this handler
-     * and answers 200 with a hash (`server.js:244-253`); `requests.ts` says why that is a defect.
+     * and answers 200 with a hash (`server.js`); `requests.ts` says why that is a defect.
      *
      * **NOTHING IN THE BODY EXCEPT `address` AND `idempotencyKey` IS READ.** Not an amount, not a
      * token, not a chain id. The drip is a server-side constant.
@@ -476,7 +476,7 @@ export function scrapeRefresh(deps: {
  * The client address, first hop only. `x-forwarded-for` past the first entry is
  * attacker-appendable, and the first entry is the one the estate's ingress writes.
  *
- * The frozen service makes this a SETTING — `HEARTH_FAUCET_TRUST_PROXY` (`env.js:133`) — and its
+ * The frozen service makes this a SETTING — `HEARTH_FAUCET_TRUST_PROXY` (`env.js`) — and its
  * reasoning is genuinely good: trusted while directly exposed makes the limit decorative, and
  * untrusted while behind a proxy locks the world out after three drips. That is a real dilemma for
  * a tool somebody runs on a laptop. It is not one here, because this service runs in exactly one
