@@ -18,6 +18,7 @@ import { TokenError, type Principal } from '@cloudsforge/auth'
 import type postgres from 'postgres'
 import { createServer, scrapeRefresh } from './server.ts'
 import { driveChain } from './dispense.ts'
+import { REQUESTER_KEY_PATTERN, requesterKey } from './requester.ts'
 import type { Db } from './db.ts'
 import {
   FUNDING_ADDRESS,
@@ -261,12 +262,57 @@ describe('the http surface', { skip }, () => {
       assert.equal(dispenses.length, 1)
       assert.equal(grants.length, 1)
 
+      /*
+       * ── WHY THIS DOES NOT SEARCH THE STORED VALUE FOR OCTETS ─────────────────────────────────
+       *
+       * It used to. The loop was `for (const octet of ['198', '51', '100']) assert.ok(!stored
+       * .includes(octet))`, on the reasoning that a shape assertion alone would pass on a key with
+       * the address appended. That reasoning was wrong twice over.
+       *
+       * It was unnecessary, because REQUESTER_KEY_PATTERN is ANCHORED at both ends and admits
+       * exactly 32 hex characters. Nothing can be appended to a value that matches it, and no
+       * dotted quad can be inside one, because `.` is not a hex digit. The shape assertion is the
+       * whole proof.
+       *
+       * And it was actively harmful, because those three octets are spelled entirely in characters
+       * that a hex digest is made of, so the loop was really asking a 128-bit random string not to
+       * contain `51`. It does, about 15% of the time. That is not a flake that shows up on one run
+       * in a thousand: the key rotates on a 2-day epoch (`retentionSeconds: 172_800`), so the
+       * digest for this /24 is FIXED for two days at a time, and the loop makes CI deterministically
+       * red for a whole window whenever it lands on one. It did, at 2026-08-17T00:00Z, epoch 10341:
+       *
+       *   r1:2df36bf7f2a68c10809308f045b8d351
+       *                                   ^^
+       *
+       * So the intent is asserted directly instead. The stored value must EQUAL the key derived
+       * here from the truncated subject — which proves it is a function of the /24 and the salt and
+       * of nothing else, the property the octet search was reaching for and could not reach.
+       */
+      /*
+       * TWO EPOCHS ARE ACCEPTED, and that is not a hedge. The server derived its key from the real
+       * clock, because it is a real server over a real socket — this case cannot hand it a fixed
+       * instant the way `testsupport`'s fixtures do. So a run that straddles a 2-day boundary
+       * between the request and this line would compare against the wrong epoch. Both values are
+       * equally legitimate derivations of the same /24, so both are allowed; what is being proven
+       * is that the stored value IS one of them, and neither of them is derived from anything but
+       * the truncated subject and the salt.
+       */
+      const now = Date.now()
+      const config = testRequester()
+      const legitimate = [now, now - config.retentionSeconds * 1000].map((at) =>
+        requesterKey('198.51.100.9', config, new Date(at)),
+      )
+      for (const key of legitimate) assert.match(key, REQUESTER_KEY_PATTERN)
+
       for (const stored of [dispenses[0]?.requester, grants[0]?.requester]) {
-        assert.match(stored ?? '', /^r1:[0-9a-f]{32}$/)
-        // The address, and every octet of it that is longer than one character. A shape assertion
-        // alone would pass on a key with the address appended.
+        assert.match(stored ?? '', REQUESTER_KEY_PATTERN)
+        assert.ok(
+          legitimate.includes(stored ?? ''),
+          'the stored key is not the derivation of this /24 under either live epoch',
+        )
+        // Belt and braces on the one substring that CANNOT arise by coincidence: a dotted quad
+        // contains `.`, which the anchored pattern above already forbids.
         assert.ok(!stored?.includes('198.51.100.9'))
-        for (const octet of ['198', '51', '100']) assert.ok(!stored?.includes(octet))
       }
     })
 
