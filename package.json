@@ -1,6 +1,6 @@
 {
   "name": "@cloudsforge/faucet",
-  "version": "2026.8.96",
+  "version": "2026.8.97",
   "private": true,
   "description": "The testnet EMBER faucet. Rate limits enforced by the database rather than by a per-replica Map, dispensing driven by a chain-keyed lease so two replicas cannot double-spend one nonce, the signature committed before it is broadcast so a lost broadcast response cannot send twice, and the funding key held by micro-custody rather than by this process. Supersedes the frozen stack/repos/hearth/tools/faucet, whose limiter is in-memory, whose sender is a single in-process promise chain, and whose default chain id is EMBER MAINNET.",
   "license": "MIT",
