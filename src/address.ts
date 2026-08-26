@@ -9,12 +9,13 @@
  *
  * Two things changed in the port and both are structural rather than stylistic:
  *
- *   1. **The keccak comes from this repository, not from a relative path into a sibling.** The
- *      frozen module reaches out with `require('../../../node/src/crypto/keccak')`
+ *   1. **The keccak comes from a declared dependency, not from a relative path into a sibling.**
+ *      The frozen module reaches out with `require('../../../node/src/crypto/keccak')`
  *      (`address.js`), which is what made the faucet un-deployable as a service: its Dockerfile
  *      has to build from the whole Hearth repository root and hand-copy six paths out of the node's
- *      source tree (`stack/repos/hearth/tools/faucet/Dockerfile:12-18`). `keccak.ts` here is
- *      settlement's, carried across for the reason its own header gives.
+ *      source tree (`stack/repos/hearth/tools/faucet/Dockerfile:12-18`). It now comes from
+ *      `@cloudsforge/evm`, which is the same fix one level up: a package boundary rather than a
+ *      path that only resolves inside one checkout.
  *   2. **A refusal is a typed error, not an `{ok:false, reason}` record.** The route maps it to a
  *      400; nothing else in the estate returns a result object for this.
  *
@@ -22,8 +23,7 @@
  * actually arrives with — the pre-EVM UTXO-era address format — and a message that names it saves
  * the round trip that "address must be 0x followed by 40 hex characters" would cost.
  */
-
-import { keccak256 } from './keccak.ts'
+import { toChecksumAddress } from '@cloudsforge/evm'
 
 const EVM_SHAPE = /^0x[0-9a-fA-F]{40}$/
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -36,22 +36,14 @@ export class AddressError extends Error {
 }
 
 /**
- * EIP-55 checksum encoding.
+ * EIP-55 checksum encoding, from `@cloudsforge/evm`.
  *
- * The hex digits of the lower-cased address are upper-cased where the corresponding nibble of
- * `keccak256(lowercase address without 0x)` is 8 or above. That is the entire specification.
+ * Re-exported rather than imported directly by callers so that `address.ts` stays the one place
+ * this service asks about addresses. The implementation moved out because five services had a
+ * byte-identical copy of it, and a checksum that five services compute two ways is a withdrawal
+ * refused for an address copied out of our own UI.
  */
-export function toChecksumAddress(address: string): string {
-  const lower = address.toLowerCase().replace(/^0x/, '')
-  const hash = Buffer.from(keccak256(Buffer.from(lower, 'ascii'))).toString('hex')
-  let out = '0x'
-  for (let i = 0; i < lower.length; i++) {
-    const character = lower[i]!
-    // Digits have no case, so only letters are touched.
-    out += Number.parseInt(hash[i]!, 16) >= 8 ? character.toUpperCase() : character
-  }
-  return out
-}
+export { toChecksumAddress }
 
 /**
  * Validate a recipient and produce the display form, or throw.
