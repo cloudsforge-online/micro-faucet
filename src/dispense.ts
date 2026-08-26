@@ -45,7 +45,7 @@
 
 import type { Db, Tx } from './db.ts'
 import type { Logger, Metrics } from '@cloudsforge/telemetry'
-import { keccak256 } from './keccak.ts'
+import { keccak256 } from '@cloudsforge/evm'
 import { addressKey, sameAddress, toChecksumAddress } from './address.ts'
 import { release, type LimitConfig } from './limits.ts'
 import {

@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomBytes } from 'node:crypto'
 import { describe, it } from 'node:test'
-import { keccak256, sha3_256 } from './keccak.ts'
+import { keccak256, sha3_256 } from '@cloudsforge/evm'
 import { AddressError, addressKey, parseRecipient, sameAddress, toChecksumAddress } from './address.ts'
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex')
