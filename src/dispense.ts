@@ -163,6 +163,37 @@ type StartOutcome = 'signed' | 'held' | 'retired'
  * lost, custody was unreachable, the node would not answer. The row stays `queued` and the next
  * tick tries again from a fresh nonce read, which is the only safe recovery from "we do not know".
  */
+/**
+ * Should this pass say out loud that the faucet is dry?
+ *
+ * Yes on the first pass that finds it dry, yes when either number has MOVED — a partial top-up is
+ * news, and so is the shortfall changing because a bigger request reached the head of the queue —
+ * and yes once every fifteen minutes so a dry faucet never becomes completely silent. Otherwise no.
+ *
+ * MODULE STATE, AND WHY IT IS ACCEPTABLE HERE. `README.md` names module-scope state as a bug class
+ * in this service, and it is right: the dispense lease is a chain-keyed resource and a second
+ * replica cannot see a promise chain held in one process. This is not that. Nothing is serialised
+ * on it and no row is claimed by it; the worst a second replica can do is emit its own copy of the
+ * same warning, which is a duplicated log line rather than a duplicated transaction.
+ */
+let lastDry: { balanceWei: bigint; neededWei: bigint; at: number } | null = null
+
+const DRY_REPORT_INTERVAL_MS = 15 * 60 * 1_000
+
+export function shouldReportDry(balanceWei: bigint, neededWei: bigint): boolean {
+  const now = Date.now()
+  if (
+    lastDry === null ||
+    lastDry.balanceWei !== balanceWei ||
+    lastDry.neededWei !== neededWei ||
+    now - lastDry.at >= DRY_REPORT_INTERVAL_MS
+  ) {
+    lastDry = { balanceWei, neededWei, at: now }
+    return true
+  }
+  return false
+}
+
 async function start(deps: DispenseDeps, row: DispenseRow): Promise<StartOutcome> {
   // THE CLAIM. False means either the state moved under us or `dispenses_in_flight_uniq` refused
   // because something else on this chain is already in flight. Both mean "not my turn", and the
@@ -185,15 +216,22 @@ async function start(deps: DispenseDeps, row: DispenseRow): Promise<StartOutcome
       // this recipient's. Held, so the row waits for a top-up rather than being failed and having
       // its reservation released to somebody else.
       deps.metrics.set('faucet_dry', 1)
-      deps.logger.warn('the faucet is out of EMBER; holding the queue until it is funded', {
-        fundingAddress: deps.fundingAddress,
-        balanceWei: funding.toString(10),
-        neededWei: needed.toString(10),
-      })
+      // Logged on the EDGE, not on the level. `faucet_dry` is the level and is set every pass; the
+      // line below repeated it every two seconds — 43,000 identical warnings a day for a condition
+      // that had not changed since 2026-08-07 (micro-org#518). A log that says the same thing forty
+      // thousand times is not a signal, and it buries the one line that IS new.
+      if (shouldReportDry(funding, needed)) {
+        deps.logger.warn('the faucet is out of EMBER; holding the queue until it is funded', {
+          fundingAddress: deps.fundingAddress,
+          balanceWei: funding.toString(10),
+          neededWei: needed.toString(10),
+        })
+      }
       await releaseToQueued(deps.sql, row.id)
       return 'held'
     }
     deps.metrics.set('faucet_dry', 0)
+    lastDry = null
 
     // The recipient-balance ceiling. Zero disables it: an operator running a devnet where every
     // account is pre-funded has no use for the rule, and `env.ts` refuses a non-zero value below

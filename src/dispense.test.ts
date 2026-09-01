@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import type postgres from 'postgres'
-import { driveChain, transactionHash, TRANSFER_GAS } from './dispense.ts'
+import { driveChain, transactionHash, TRANSFER_GAS, shouldReportDry } from './dispense.ts'
 import { acceptDrip } from './requests.ts'
 import { budgetState } from './limits.ts'
 import type { Db } from './db.ts'
@@ -432,3 +432,36 @@ async function firstId(sql: postgres.Sql): Promise<string | null> {
   const rows = (await sql`select id from dispenses order by created_at limit 1`) as ReadonlyArray<{ id: string }>
   return rows[0]?.id ?? null
 }
+
+/*
+ * micro-org#518. The faucet has been dry since 2026-08-07 and said so every two seconds — about
+ * 43,000 identical warnings a day, and 43,000 `eth_getBalance` calls behind them. The HOLD is
+ * correct and stays; what was wrong is re-announcing an unchanged condition. `faucet_dry` is the
+ * level and is still set on every pass; this is the edge.
+ *
+ * Distinct values per case on purpose: the throttle keeps module state, so a test that reused a
+ * neighbour's numbers would pass or fail on ordering rather than on the rule.
+ */
+describe('reporting a dry faucet (micro-org#518)', () => {
+  it('speaks on the edge, not on every pass', () => {
+  // First sighting of this shortfall speaks.
+    assert.equal(shouldReportDry(0n, 11_000_000_000_000_000_000n), true)
+    // The same shortfall, again and again, does not.
+    assert.equal(shouldReportDry(0n, 11_000_000_000_000_000_000n), false)
+    assert.equal(shouldReportDry(0n, 11_000_000_000_000_000_000n), false)
+  })
+
+  it('treats a partial top-up, and a moving shortfall, as news', () => {
+    assert.equal(shouldReportDry(5n, 900_000_000_000_000_000_000n), true)
+    assert.equal(shouldReportDry(5n, 900_000_000_000_000_000_000n), false)
+
+    // Somebody sent SOMETHING and it is still not enough. An operator watching for the effect of a
+    // top-up must see that it landed and was insufficient, not silence.
+    assert.equal(shouldReportDry(6n, 900_000_000_000_000_000_000n), true)
+
+    // And the need can move without the balance: a larger request reaching the head of the queue
+    // changes what "dry" means for the same balance.
+    assert.equal(shouldReportDry(6n, 901_000_000_000_000_000_000n), true)
+    assert.equal(shouldReportDry(6n, 901_000_000_000_000_000_000n), false)
+  })
+})
